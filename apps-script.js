@@ -1,5 +1,5 @@
 /**
- * 한눈 가계부 · 구글 시트 서버 코드 (버전 6)
+ * 한눈 가계부 · 구글 시트 서버 코드 (버전 7)
  *
  * 이 코드 전체를 Apps Script 편집기(Code.gs)에 붙여넣고 저장하세요.
  *  1) 함수 목록에서 setup 을 고르고 [실행] → 권한 허용
@@ -16,7 +16,9 @@ var HIST_SHEET = '과거기록';
 var SUMMARY_SHEET = '연간요약';
 var BAL_SHEET = '잔고';
 var BAL_HEAD = ['월', '통장 잔고', '현금 잔고', '수정시각'];
-var SERVER_VER = 6;
+var SERVER_VER = 7;
+var REC_SHEET = '반복';
+var REC_HEAD = ['ID', '이름', '구분', '개인/사업', '분류', '결제수단', '금액', '날짜(일)', '금액 매달 다름', '사용', '시작 월', '수정시각'];
 var ENTRY_HEAD = ['ID', '날짜', '월', '구분', '개인/사업', '분류', '결제수단', '공급가액', '부가세', '합계', '메모', '기록시각'];
 var VISIT_HEAD = ['날짜', '월', '방문자수', '수정시각'];
 var HIST_HEAD = ['연도', '월', '수입', '방문'];
@@ -141,6 +143,7 @@ function doPost(e) {
         visits: readVisits_(),
         hist: readHist_(),
         bal: readBal_(),
+        rec: readRec_(),
         ver: SERVER_VER,
         sheetUrl: SpreadsheetApp.getActive().getUrl()
       });
@@ -242,7 +245,7 @@ function readHist_() {
 
 function applyOps_(ops) {
   // 같은 대상이 여러 번 바뀐 경우 마지막 것만 반영해요
-  var entries = {}, visits = {}, hist = {}, bal = {};
+  var entries = {}, visits = {}, hist = {}, bal = {}, rec = {};
   for (var i = 0; i < ops.length; i++) {
     var op = ops[i];
     if (!op || typeof op !== 'object') continue;
@@ -250,12 +253,15 @@ function applyOps_(ops) {
     else if (op.op === 'delete' && op.id) entries[String(op.id)] = { del: true };
     else if (op.op === 'visits' && op.d) visits[normDate_(op.d, 'Asia/Seoul')] = Math.max(0, Math.round(num_(op.n)));
     else if (op.op === 'bal' && /^\d{4}-\d{2}$/.test(String(op.ym))) bal[String(op.ym)] = { bank: num_(op.bank), cash: num_(op.cash), hasBank: op.bank !== null && op.bank !== '', hasCash: op.cash !== null && op.cash !== '' };
+    else if (op.op === 'rec' && op.rec && op.rec.id) rec[String(op.rec.id)] = { rec: op.rec };
+    else if (op.op === 'rec_del' && op.id) rec[String(op.id)] = { del: true };
     else if (op.op === 'hist' && op.y && op.m) hist[num_(op.y) + '-' + num_(op.m)] = { y: num_(op.y), m: num_(op.m), inc: num_(op.inc), vis: num_(op.vis) };
   }
   applyEntries_(entries);
   applyVisits_(visits);
   applyHist_(hist);
   applyBal_(bal);
+  applyRec_(rec);
 }
 
 function applyEntries_(fin) {
@@ -351,6 +357,56 @@ function applyBal_(fin) {
   }
   writeRows_(sh, appends, [], BAL_HEAD.length);
   sortRows_(sh, [{ column: 1, ascending: true }]);
+}
+
+/* ───────── 반복 (매달 고정 지출) ───────── */
+
+function recSheet_() {
+  var sh = SpreadsheetApp.getActive().getSheetByName(REC_SHEET);
+  if (sh) return sh;
+  sh = ensureSheet_(REC_SHEET, REC_HEAD, [110, 140, 70, 75, 100, 75, 95, 70, 110, 55, 80, 140]);
+  sh.getRange('A:F').setNumberFormat('@');
+  sh.getRange('K:K').setNumberFormat('@');
+  sh.getRange('G:G').setNumberFormat('#,##0');
+  sh.getRange('L:L').setNumberFormat('yyyy-mm-dd hh:mm');
+  return sh;
+}
+
+function readRec_() {
+  var sh = SpreadsheetApp.getActive().getSheetByName(REC_SHEET);
+  if (!sh || sh.getLastRow() < 2) return [];
+  var rows = sh.getRange(2, 1, sh.getLastRow() - 1, REC_HEAD.length).getValues();
+  var out = [];
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    var t = KO_TO_TYPE[String(r[2]).replace(/^\s+|\s+$/g, '')];
+    if (!r[0] || !r[1] || !t) continue;
+    out.push({ id: String(r[0]), name: String(r[1]), t: t, biz: String(r[3]) === '사업', cat: String(r[4]), pay: String(r[5]),
+      amt: num_(r[6]), day: Math.min(31, Math.max(1, num_(r[7]) || 1)), vary: r[8] === true || String(r[8]) === 'O',
+      on: !(r[9] === false || String(r[9]) === 'X'), from: String(r[10] || '') });
+  }
+  return out;
+}
+
+function applyRec_(fin) {
+  var ids = Object.keys(fin);
+  if (!ids.length) return;
+  var sh = recSheet_();
+  var rowOf = indexRows_(sh, function (r) { return String(r[0]); });
+  var appends = [], dels = [];
+  for (var i = 0; i < ids.length; i++) {
+    var f = fin[ids[i]], r = rowOf[ids[i]];
+    if (f.del) { if (r) dels.push(r); continue; }
+    var x = f.rec, t = TYPE_TO_KO[x.t];
+    if (!t || !x.name) continue;
+    var row = [String(x.id).slice(0, 40), clean_(x.name, 40), t, x.biz ? '사업' : '개인', clean_(x.cat, 30), clean_(x.pay, 20),
+      Math.abs(Math.round(num_(x.amt))), Math.min(31, Math.max(1, Math.round(num_(x.day)) || 1)), x.vary ? 'O' : '', x.on === false ? 'X' : 'O',
+      clean_(x.from, 7), new Date()];
+    if (r) sh.getRange(r, 1, 1, row.length).setValues([row]);
+    else appends.push(row);
+  }
+  writeRows_(sh, appends, dels, REC_HEAD.length);
+  sortRows_(sh, [{ column: 8, ascending: true }]);
 }
 
 function indexRows_(sh, keyOf) {

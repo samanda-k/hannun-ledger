@@ -254,6 +254,18 @@ button.dayhead:hover{color:var(--ink)}
 .tot b{font-size:19px}
 .tot small{font-size:12px;color:var(--muted)}
 
+/* 고정 지출 */
+.reccard{border-color:var(--accent);background:linear-gradient(var(--accent-soft),var(--surface) 70px)}
+.recrows{display:flex;flex-direction:column;gap:8px}
+.recrow{display:flex;align-items:center;gap:10px;justify-content:space-between}
+.reccheck{display:flex;align-items:center;gap:10px;min-width:0;flex:1;cursor:pointer}
+.reccheck input{width:20px;height:20px;accent-color:var(--accent);flex:none}
+.reccheck span{display:flex;flex-direction:column;min-width:0}
+.reccheck b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.reccheck small{font-size:12px;color:var(--muted)}
+.reccheck em{font-style:normal;color:var(--biz);font-weight:600}
+.recrow .amountbox{width:128px;flex:none}
+
 /* full table */
 .full{position:fixed;inset:0;z-index:30;background:var(--surface);display:flex;flex-direction:column;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)}
 .full-hd{display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid var(--line)}
@@ -373,7 +385,7 @@ const S={
   mode:'setup',view:'month',y:T0.getFullYear(),m:T0.getMonth()+1,listTab:'all',
   entries:new Map(),visits:new Map(),hist:new Map(),
   byMonth:new Map(),visByMonth:new Map(),stats:new Map(),
-  sync:'idle',lastSync:0,sheetUrl:'',setupMsg:'',bal:new Map(),oldServer:false
+  sync:'idle',lastSync:0,sheetUrl:'',setupMsg:'',bal:new Map(),oldServer:false,rec:new Map(),recDraft:{},recServer:true
 };
 const ui=ls.get(K.ui,{});
 if(ui.view==='year')S.view='year';
@@ -428,12 +440,14 @@ function applyLocal(op){
   if(op.op==='upsert')S.entries.set(op.entry.id,op.entry);
   else if(op.op==='delete')S.entries.delete(op.id);
   else if(op.op==='visits'){if(op.n>0)S.visits.set(op.d,op.n);else S.visits.delete(op.d)}
+  else if(op.op==='rec'){S.rec.set(op.rec.id,op.rec)}
+  else if(op.op==='rec_del'){S.rec.delete(op.id)}
   else if(op.op==='bal'){S.bal.set(op.ym,{ym:op.ym,bank:op.bank,cash:op.cash,at:Date.now()})}
   else if(op.op==='hist'){const k=op.y+'-'+op.m;if(op.inc||op.vis)S.hist.set(k,{y:op.y,m:op.m,inc:op.inc,vis:op.vis});else S.hist.delete(k)}
 }
 function saveCache(){
   if(S.mode!=='live')return;
-  ls.set(K.cache,{entries:[...S.entries.values()],visits:[...S.visits],hist:[...S.hist.values()],bal:[...S.bal.values()],sheetUrl:S.sheetUrl,at:S.lastSync});
+  ls.set(K.cache,{entries:[...S.entries.values()],visits:[...S.visits],hist:[...S.hist.values()],bal:[...S.bal.values()],rec:[...S.rec.values()],sheetUrl:S.sheetUrl,at:S.lastSync});
 }
 function loadCache(){
   const c=ls.get(K.cache,null);if(!c)return false;
@@ -441,6 +455,7 @@ function loadCache(){
   S.visits=new Map(c.visits||[]);
   S.hist=new Map((c.hist||[]).map(h=>[h.y+'-'+h.m,h]));
   S.bal=new Map((c.bal||[]).map(b=>[b.ym,b]));
+  S.rec=new Map((c.rec||[]).map(r=>[r.id,r]));
   S.sheetUrl=c.sheetUrl||'';S.lastSync=c.at||0;
   outbox.forEach(applyLocal);reindex();return true;
 }
@@ -473,6 +488,8 @@ async function refresh(){
     S.hist=new Map((j.hist||[]).map(h=>[h.y+'-'+h.m,h]));
     S.oldServer=!Array.isArray(j.bal);
     if(!S.oldServer)S.bal=new Map(j.bal.map(b=>[b.ym,b]));
+    S.recServer=Array.isArray(j.rec);
+    if(S.recServer)S.rec=new Map(j.rec.map(r=>[r.id,r]));
     S.sheetUrl=j.sheetUrl||S.sheetUrl;
     outbox.forEach(applyLocal);reindex();
     S.lastSync=Date.now();S.sync=outbox.length?'busy':'ok';
@@ -560,6 +577,7 @@ function renderMonth(){
     <div class="tile"><span class="lbl">개인지출</span><span class="val">${won(s.personal)}</span><span class="sub">&nbsp;</span></div>
     <div class="tile"><span class="lbl">남는 돈</span><span class="val ${s.left<0?'c-out':''}">${sgn(s.left)}</span><span class="sub">저축·빚 반영</span></div>
   </div>`;
+  h+=recCard(y,m);
   if(s.vat)h+=`<div class="vatline num">부가세 포함 매출 ${won(s.sup+s.vat)}원 · 공급가액 ${won(s.sup)}원 · 부가세 ${won(s.vat)}원 (부가세 신고 참고)</div>`;
 
   const items=Object.entries(s.items).sort((a,b)=>b[1].amt-a[1].amt);
@@ -641,6 +659,91 @@ function saveBal(){
   const g=id=>{const t=$(id).value.replace(/[^\d]/g,'');return t===''?null:parseInt(t,10)};
   const op={op:'bal',ym:M.ym,bank:g('b-bank'),cash:g('b-cash')};
   closeModal();commit([op]);toast('잔고를 저장했어요');
+}
+
+/* ───────── 매달 고정 지출 ───────── */
+const recKind=r=>r.t==='move'?'저축·빚':r.t==='in'?'기타 수입':r.biz?'사업':'개인';
+const recEntryId=(r,ym)=>`rc-${r.id}-${ym.replace('-','')}`;
+function recMatch(r,e){return e.t===r.t&&e.cat===r.cat&&String(e.memo||'').startsWith(r.name)}
+function recDone(r,ym){return S.entries.has(recEntryId(r,ym))||(S.byMonth.get(ym)||[]).some(e=>recMatch(r,e))}
+function recLastAmt(r){let best=null;for(const e of S.entries.values())if(recMatch(r,e)&&(!best||e.d>best.d))best=e;return best?best.amt:r.amt}
+function recDue(ym){return [...S.rec.values()].filter(r=>r.on!==false&&(!r.from||r.from<=ym)&&!recDone(r,ym)).sort((a,b)=>a.day-b.day||a.name.localeCompare(b.name))}
+function recCard(y,m){
+  const ym=ymOf(y,m),curYm=ymOf(T0.getFullYear(),T0.getMonth()+1);
+  if(!S.rec.size||ym>curYm)return '';
+  const due=recDue(ym);if(!due.length)return '';
+  const dr=S.recDraft[ym]||(S.recDraft[ym]={});
+  due.forEach(r=>{if(!dr[r.id])dr[r.id]={on:ym<curYm||r.day<=T0.getDate(),amt:r.vary?recLastAmt(r):r.amt}});
+  const n=due.filter(r=>dr[r.id].on&&dr[r.id].amt).length;
+  return `<section class="card reccard"><h2>${m}월 고정 지출 · 아직 안 넣은 ${due.length}건<span><button type="button" class="ghost" id="recManage">관리</button></span></h2>
+    <div class="recrows">${due.map(r=>{const d=dr[r.id];return `<div class="recrow"><label class="reccheck"><input type="checkbox" data-rc-on="${esc(r.id)}" ${d.on?'checked':''}><span><b>${esc(r.name)}</b><small>${r.day}일 · ${recKind(r)} ${esc(r.cat)}${r.vary?' · <em>금액 확인</em>':''}</small></span></label><div class="amountbox sm"><input class="num" inputmode="numeric" data-rc-amt="${esc(r.id)}" value="${d.amt?won(d.amt):''}" aria-label="${esc(r.name)} 금액"><span>원</span></div></div>`}).join('')}</div>
+    <button type="button" class="primary" id="recAdd" style="width:100%;margin-top:10px" ${n?'':'disabled'}>선택한 ${n}건 넣기</button>
+  </section>`;
+}
+function addRecEntries(ym){
+  const dr=S.recDraft[ym]||{};const last=new Date(+ym.slice(0,4),+ym.slice(5),0).getDate();
+  const ops=[];let ts=Date.now();
+  recDue(ym).forEach(r=>{const d=dr[r.id];if(!d||!d.on||!d.amt)return;
+    ops.push({op:'upsert',entry:{id:recEntryId(r,ym),d:`${ym}-${pad(Math.min(r.day,last))}`,t:r.t,biz:r.t==='out'?!!r.biz:false,cat:r.cat,pay:r.pay||'',sup:0,vat:0,amt:d.amt,memo:r.name,ts:ts++}})});
+  if(!ops.length)return;
+  delete S.recDraft[ym];commit(ops);toast(`고정 지출 ${ops.length}건을 넣었어요`);
+}
+function openRecs(){M={kind:'recs'};drawModal()}
+function recsHTML(){
+  const list=[...S.rec.values()].sort((a,b)=>a.day-b.day||a.name.localeCompare(b.name));
+  return `<div class="sheet" role="dialog" aria-modal="true" aria-label="고정 지출 관리">
+    <div class="grab"></div>
+    <div class="hd"><h3>매달 고정 지출</h3><button type="button" class="iconbtn" data-close aria-label="닫기">✕</button></div>
+    <p class="note" style="margin:0">등록해 두면 월별 화면에 "아직 안 넣은 고정 지출"로 떠요. 금액이 매달 다른 항목은 지난달 금액이 미리 채워져요.</p>
+    ${!S.recServer&&S.mode==='live'?'<p class="note" style="color:var(--biz);margin:0">구글 시트 서버 코드 업데이트(재배포)가 필요해요. 지금은 이 기기에만 저장돼요.</p>':''}
+    <div class="setlist">${list.map(r=>`<button type="button" data-rec-edit="${esc(r.id)}" style="${r.on===false?'opacity:.5':''}"><span>${esc(r.name)} <small>매달 ${r.day}일 · ${recKind(r)} ${esc(r.cat)}</small></span><span class="num">${r.vary?'<small>매달 다름 </small>':''}${won(r.amt)}</span></button>`).join('')||'<p class="note">아직 등록한 항목이 없어요.</p>'}</div>
+    <button type="button" class="addline" id="recNew">+ 고정 지출 추가</button>
+    <div style="height:14px"></div>
+  </div>`;
+}
+function openRecEdit(r){
+  const curYm=ymOf(T0.getFullYear(),T0.getMonth()+1);
+  M={kind:'rec',isNew:!r,armed:false,err:'',r:r?Object.assign({},r):{id:uid(),name:'',t:'out',biz:true,cat:'고정비',pay:'',amt:0,day:25,vary:false,on:true,from:curYm}};
+  drawModal();
+}
+function recCats(r){return r.t==='move'?MOVES:r.t==='in'?ETC_IN.filter(c=>c!==FUND_CAT):(r.biz?BIZ_OUT.filter(c=>c!==SETUP_CAT&&c!==REFUND_CAT):PERSONAL_OUT)}
+function recEditHTML(){
+  const r=M.r;
+  return `<form class="sheet" id="sheet" autocomplete="off" role="dialog" aria-modal="true" aria-label="고정 지출 편집">
+    <div class="grab"></div>
+    <div class="hd"><h3>${M.isNew?'고정 지출 추가':'고정 지출 고치기'}</h3><button type="button" class="iconbtn" data-close aria-label="닫기">✕</button></div>
+    <div class="field"><label for="r-name">이름 (내역에 이 이름으로 적혀요)</label><input id="r-name" class="txt" value="${esc(r.name)}" maxlength="30" placeholder="예: 어반 임대료"></div>
+    <div class="typeseg"><button type="button" class="out" data-rt="out" aria-pressed="${r.t==='out'}">지출</button><button type="button" class="move" data-rt="move" aria-pressed="${r.t==='move'}">저축·빚</button><button type="button" class="in" data-rt="in" aria-pressed="${r.t==='in'}">기타 수입</button></div>
+    ${r.t==='out'?`<div class="bizswitch"><button type="button" class="b" data-rb="1" aria-pressed="${!!r.biz}">사업 지출</button><button type="button" class="p" data-rb="0" aria-pressed="${!r.biz}">개인지출</button></div>`:''}
+    <div class="field"><span class="lab">분류</span><div class="chips">${recCats(r).map(c=>chip(c,r.cat===c,`data-rcat="${esc(c)}"`)).join('')}</div></div>
+    <div class="two">
+      <div class="field"><label for="r-amt">금액</label><div class="amountbox sm"><input id="r-amt" class="num" inputmode="numeric" value="${r.amt?won(r.amt):''}" placeholder="0"><span>원</span></div></div>
+      <div class="field"><label for="r-day">매달 며칠</label><div class="amountbox sm"><input id="r-day" class="num" inputmode="numeric" value="${r.day}"><span>일</span></div></div>
+    </div>
+    <label class="vat"><input type="checkbox" id="r-vary" ${r.vary?'checked':''}>금액이 매달 달라요 (지난달 금액을 채워 두고 확인받아요)</label>
+    <label class="vat"><input type="checkbox" id="r-on" ${r.on!==false?'checked':''}>사용하기 (끄면 월별 화면에 안 떠요)</label>
+    <div class="err" id="m-err">${esc(M.err)}</div>
+    <div class="sheet-foot">
+      ${M.isNew?'':`<button type="button" class="danger ${M.armed?'armed':''}" id="r-del">${M.armed?'정말 삭제':'삭제'}</button>`}
+      <button type="submit" class="primary">저장</button>
+    </div>
+  </form>`;
+}
+function readRecForm(){
+  const r=M.r,g=id=>$(id);
+  if(g('r-name'))r.name=g('r-name').value.trim();
+  if(g('r-amt'))r.amt=parseAmt(g('r-amt').value);
+  if(g('r-day'))r.day=Math.min(31,Math.max(1,parseAmt(g('r-day').value)||1));
+  if(g('r-vary'))r.vary=g('r-vary').checked;
+  if(g('r-on'))r.on=g('r-on').checked;
+}
+function saveRec(){
+  readRecForm();const r=M.r;
+  if(!r.name){M.err='이름을 적어 주세요';drawModal();return}
+  if(!r.cat){M.err='분류를 골라 주세요';drawModal();return}
+  if(!r.amt&&!r.vary){M.err='금액을 적어 주세요';drawModal();return}
+  if(r.t!=='out')r.biz=false;
+  commit([{op:'rec',rec:Object.assign({},r)}]);openRecs();toast('저장했어요');
 }
 
 function renderList(y,m){
@@ -1011,6 +1114,7 @@ function settingsHTML(){
       ${S.sheetUrl?`<a href="${esc(S.sheetUrl)}" target="_blank" rel="noopener">구글 시트 열기 <small>연간요약 표도 여기 있어요</small></a>`:''}
       <button type="button" id="showQr">폰 연결 QR <small>폰 카메라로 찍으면 연결돼요</small></button>
       ${M.qr?`<div class="qr" id="qrBox"></div><p class="note" style="text-align:center;margin:0">이 QR과 링크에는 비밀코드가 들어 있어요. 다른 사람에게 보여주지 마세요.</p><button type="button" class="ghost" id="copyLink">연결 링크 복사 (내 폰으로만 보내기)</button>`:''}
+      <button type="button" id="openRecs">매달 고정 지출 관리 <small>${S.rec.size}개 등록</small></button>
       <button type="button" id="syncNow">지금 다시 불러오기 <small>${S.lastSync?new Date(S.lastSync).toLocaleString('ko-KR',{month:'numeric',day:'numeric',hour:'numeric',minute:'2-digit'})+' 동기화':''}</small></button>
       <button type="button" id="unlink" class="${M.armed?'danger armed':''}">${M.armed?(outbox.length?`저장 안 된 ${outbox.length}건이 사라져요. 정말 해제`:'정말 연결 해제'):'이 기기 연결 해제'} <small>시트의 기록은 그대로 남아요</small></button>
     </div>`:`<div class="setlist"><button type="button" id="goSetup2">구글 시트 연결하기</button></div>`}
@@ -1035,7 +1139,7 @@ function drawModal(){
   if(!M){$('modal').innerHTML='';return}
   const old=document.querySelector('#modal .sheet');const top=old?old.scrollTop:0;
   if(M.kind==='full')return drawFull();
-  const html=M.kind==='sales'?salesHTML():M.kind==='entry'?entryHTML():M.kind==='hist'?histHTML():M.kind==='bal'?balHTML():settingsHTML();
+  const html=M.kind==='sales'?salesHTML():M.kind==='entry'?entryHTML():M.kind==='hist'?histHTML():M.kind==='bal'?balHTML():M.kind==='recs'?recsHTML():M.kind==='rec'?recEditHTML():settingsHTML();
   $('modal').innerHTML=`<div class="scrim" id="scrim">${html}</div>`;
   const sh=document.querySelector('#modal .sheet');if(sh)sh.scrollTop=top;
   document.documentElement.style.overflow='hidden';
@@ -1078,7 +1182,8 @@ function lineOf(el){const k=el.closest('.line');return k?M.lines.find(l=>l.key==
 /* ───────── 이벤트 ───────── */
 document.addEventListener('input',ev=>{
   const t=ev.target;
-  if(t.matches('#f-amt,[data-la],[data-hi],#b-bank,#b-cash')){const v=parseAmt(t.value);t.value=v?won(v):''}
+  if(t.matches('#f-amt,[data-la],[data-hi],#b-bank,#b-cash,[data-rc-amt],#r-amt')){const v=parseAmt(t.value);t.value=v?won(v):''}
+  if(t.dataset.rcAmt){const dr=S.recDraft[ymOf(S.y,S.m)];if(dr&&dr[t.dataset.rcAmt])dr[t.dataset.rcAmt].amt=parseAmt(t.value);return}
   if(!M)return;
   if(M.kind==='sales'){
     const l=lineOf(t);
@@ -1092,7 +1197,9 @@ document.addEventListener('input',ev=>{
   }
 });
 document.addEventListener('change',ev=>{
-  const t=ev.target;if(!M)return;
+  const t=ev.target;
+  if(t.dataset&&t.dataset.rcOn){const dr=S.recDraft[ymOf(S.y,S.m)];if(dr&&dr[t.dataset.rcOn]){dr[t.dataset.rcOn].on=t.checked;render()}return}
+  if(!M)return;
   if(M.kind==='sales'){
     if(t.id==='sd'&&t.value&&t.value!==M.d){const carry=M.lines.filter(l=>!l.id&&(l.amt||l.cat));loadSalesDate(t.value,carry);M.err='';drawModal()}
     else if(t.matches('[data-lv]')){const l=lineOf(t);if(l){l.vatOn=t.checked;const c=t.closest('.line').querySelector('[data-calc]');if(c)c.textContent=calcText(l)}}
@@ -1102,7 +1209,7 @@ document.addEventListener('submit',ev=>{
   ev.preventDefault();
   if(ev.target.id==='setupForm')return connect();
   if(!M)return;
-  if(M.kind==='sales')saveSales();else if(M.kind==='entry')saveEntry(false);else if(M.kind==='hist')saveHist();else if(M.kind==='bal')saveBal();
+  if(M.kind==='sales')saveSales();else if(M.kind==='entry')saveEntry(false);else if(M.kind==='hist')saveHist();else if(M.kind==='bal')saveBal();else if(M.kind==='rec')saveRec();
 });
 document.addEventListener('keydown',ev=>{if(ev.key==='Escape'&&M)closeModal()});
 document.addEventListener('click',ev=>{
@@ -1139,9 +1246,23 @@ document.addEventListener('click',ev=>{
       if(b.dataset.hy){const ch=M.rows.some(r=>r.inc!==r.o.inc||r.vis!==r.o.vis);if(ch)saveHistQuiet();openHist(M.y+ +b.dataset.hy);return}
       return;
     }
+    if(M.kind==='recs'){
+      if(b.dataset.recEdit){const r=S.rec.get(b.dataset.recEdit);if(r)openRecEdit(r);return}
+      if(b.id==='recNew')return openRecEdit(null);
+      return;
+    }
+    if(M.kind==='rec'){
+      readRecForm();const r=M.r;
+      if(b.dataset.rt){if(r.t!==b.dataset.rt){r.t=b.dataset.rt;r.biz=r.t==='out';r.cat=recCats(r)[0]}drawModal();return}
+      if(b.dataset.rb){const nb=b.dataset.rb==='1';if(!!r.biz!==nb){r.biz=nb;r.cat=recCats(r)[0]}drawModal();return}
+      if(b.dataset.rcat){r.cat=b.dataset.rcat;M.err='';drawModal();return}
+      if(b.id==='r-del'){if(!M.armed){M.armed=true;drawModal();return}commit([{op:'rec_del',id:r.id}]);openRecs();toast('삭제했어요');return}
+      return;
+    }
     if(M.kind==='settings'){
       if(b.id==='showQr'){M.qr=!M.qr;drawModal();return}
       if(b.id==='copyLink'){copy(connectLink(),'연결 링크를 복사했어요. 내 폰으로만 보내 주세요.');return}
+      if(b.id==='openRecs')return openRecs();
       if(b.id==='syncNow'){closeModal();flush();refresh();return}
       if(b.id==='goSetup2'){closeModal();S.mode='setup';render();return}
       if(b.id==='unlink'){
@@ -1168,6 +1289,8 @@ document.addEventListener('click',ev=>{
   if(b.id==='openHist')return openHist(S.y-1);
   if(b.id==='openFull')return openFull();
   if(b.id==='editBal')return openBal();
+  if(b.id==='recAdd')return addRecEntries(ymOf(S.y,S.m));
+  if(b.id==='recManage')return openRecs();
   if(b.dataset.tab){S.listTab=b.dataset.tab;return render()}
   if(b.dataset.sales)return openSales(b.dataset.sales);
   if(b.dataset.edit){const e=S.entries.get(b.dataset.edit);if(e)openEntry(e);return}

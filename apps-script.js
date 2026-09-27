@@ -25,6 +25,7 @@ const TOKEN_KEY = 'LEDGER_TOKEN';
 function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('한눈 가계부')
+    .addItem('처음 설정 (setup)', 'setup')
     .addItem('비밀코드 보기', 'showToken')
     .addItem('비밀코드 새로 만들기', 'resetToken')
     .addSeparator()
@@ -69,6 +70,10 @@ function setup() {
   const token = getToken_() || newToken_();
   console.log('설정이 끝났어요. 가계부 앱에 입력할 비밀코드: ' + token);
   console.log('다음 단계: 오른쪽 위 [배포] → [새 배포] → 웹 앱');
+  try {
+    // 시트 메뉴에서 실행했을 때는 팝업으로 보여줘요 (편집기에서 실행하면 실행 로그에 나와요)
+    SpreadsheetApp.getUi().alert('설정이 끝났어요.\n\n가계부 앱에 입력할 비밀코드\n' + token + '\n\n다음 단계: Apps Script 편집기에서 [배포] → [새 배포] → 웹 앱');
+  } catch (err) {}
 }
 
 function ensureSheet_(name, head, widths) {

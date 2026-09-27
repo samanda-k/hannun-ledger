@@ -337,9 +337,10 @@ details pre{max-height:240px;overflow:auto;background:var(--surface2);border-rad
 /* ───────── 분류 ───────── */
 const SALES_ITEMS=['예약금','시술','다회권','정액권','제품','기타'];
 const PAYS=['카드','계좌','현금'];
-const BIZ_OUT=['고정비','소모품','사업자'];
+const BIZ_OUT=['고정비','소모품','사업자','창업·이전'];
+const SETUP_CAT='창업·이전',FUND_CAT='대출·자금';   // 둘 다 월 급여·남는 돈 계산에서 빠져요
 const PERSONAL_OUT=['식비','카페·간식','장보기','교통','주거·관리비','통신','쇼핑','의료','문화·여가','경조사','교육','보험','기타'];
-const ETC_IN=['기타 수입','이자','환급','용돈','중고판매'];
+const ETC_IN=['기타 수입','이자','환급','용돈','중고판매','대출·자금'];
 const MOVES=['모으기','노란우산공제','새출발기금','빌린 돈 갚기'];
 const WD=['일','월','화','수','목','금','토'];
 const K={cfg:'hn-cfg',cache:'hn-cache',out:'hn-outbox',ui:'hn-ui'};
@@ -390,7 +391,7 @@ function isSale(e){return e.t==='in'&&e.biz}
 function monthStats(y,m){
   const k=ymOf(y,m);
   if(S.stats.has(k))return S.stats.get(k);
-  const r={sales:0,salesN:0,sup:0,vat:0,visits:S.visByMonth.get(k)||0,etcIn:0,fix:0,sup2:0,bizEtc:0,bizOut:0,personal:0,loan:0,repay:0,save:0,yu:0,
+  const r={sales:0,salesN:0,sup:0,vat:0,visits:S.visByMonth.get(k)||0,etcIn:0,fix:0,sup2:0,bizEtc:0,bizOut:0,personal:0,loan:0,repay:0,save:0,yu:0,setup:0,fund:0,
     items:{},pays:{},outCats:{},n:0,hist:false};
   for(const e of (S.byMonth.get(k)||[])){
     r.n++;
@@ -398,7 +399,9 @@ function monthStats(y,m){
       if(e.biz){r.sales+=e.amt;r.salesN++;r.sup+=e.sup||0;r.vat+=e.vat||0;
         const it=r.items[e.cat]||(r.items[e.cat]={amt:0,n:0});it.amt+=e.amt;it.n++;
         r.pays[e.pay||'기타']=(r.pays[e.pay||'기타']||0)+e.amt;}
+      else if(e.cat===FUND_CAT)r.fund+=e.amt;
       else r.etcIn+=e.amt;
+    }else if(e.t==='out'&&e.cat===SETUP_CAT){r.setup+=e.amt;
     }else if(e.t==='out'){
       const key=(e.biz?'B|':'P|')+e.cat;r.outCats[key]=(r.outCats[key]||0)+e.amt;
       if(e.biz){r.bizOut+=e.amt;if(e.cat==='고정비')r.fix+=e.amt;else if(e.cat==='소모품')r.sup2+=e.amt;else r.bizEtc+=e.amt}
@@ -589,6 +592,12 @@ function renderMonth(){
       <div><span class="lbl">노란우산공제</span><span class="val c-move">${won(s.yu)}</span>${cum?`<span class="lbl">적립금 ${won(cum)}</span>`:''}</div>
     </div></section>`;
   }
+  if(s.setup||s.fund){
+    h+=`<section class="card"><h2>창업·이전<span>월 급여·남는 돈 계산에서 빠져요</span></h2><div class="moves num">
+      <div><span class="lbl">창업·이전 비용</span><span class="val c-out">${won(s.setup)}</span></div>
+      <div><span class="lbl">대출·자금 들어옴</span><span class="val c-in">${won(s.fund)}</span></div>
+    </div></section>`;
+  }
   h+=balCard(y,m);
   h+=renderList(y,m);
   return h;
@@ -718,6 +727,11 @@ function renderYear(){
   {const cm=cur.map((_,i)=>(!isCurY||i<upto)?yuCum(Y,i+1):null);const last=[...cm].reverse().find(v=>v!=null)||0;
    if(last)rows.push({label:'└ 적립금',cum:cm,tot:last,cls:'cum'});}
   rows.push({label:'남는 돈',vals:cur.map(x=>x.left),cls:'strong',neg:true});
+  if(cur.some(x=>x.setup||x.fund)){
+    rows.push({sec:'계산에서 뺀 돈'});
+    rows.push({label:'창업·이전 비용',vals:cur.map(x=>x.setup)});
+    rows.push({label:'대출·자금',vals:cur.map(x=>x.fund)});
+  }
 
   const td=(v,r,x='')=>{
     if(r.pct){if(v==null)return `<td class="dim ${x}">–</td>`;return `<td class="${r.signed?(v>0?'pos':v<0?'neg':''):''} ${x}">${r.signed?pctTxt(v):(v<0?'−':'')+Math.abs(Math.round(v*100))+'%'}</td>`}

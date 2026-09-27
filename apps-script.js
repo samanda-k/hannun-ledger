@@ -1,5 +1,5 @@
 /**
- * 한눈 가계부 · 구글 시트 서버 코드 (버전 5)
+ * 한눈 가계부 · 구글 시트 서버 코드 (버전 6)
  *
  * 이 코드 전체를 Apps Script 편집기(Code.gs)에 붙여넣고 저장하세요.
  *  1) 함수 목록에서 setup 을 고르고 [실행] → 권한 허용
@@ -16,7 +16,7 @@ var HIST_SHEET = '과거기록';
 var SUMMARY_SHEET = '연간요약';
 var BAL_SHEET = '잔고';
 var BAL_HEAD = ['월', '통장 잔고', '현금 잔고', '수정시각'];
-var SERVER_VER = 5;
+var SERVER_VER = 6;
 var ENTRY_HEAD = ['ID', '날짜', '월', '구분', '개인/사업', '분류', '결제수단', '공급가액', '부가세', '합계', '메모', '기록시각'];
 var VISIT_HEAD = ['날짜', '월', '방문자수', '수정시각'];
 var HIST_HEAD = ['연도', '월', '수입', '방문'];
@@ -444,10 +444,11 @@ function buildSummary() {
   var E = "'" + ENTRY_SHEET + "'!", V = "'" + VISIT_SHEET + "'!", H = "'" + HIST_SHEET + "'!";
   function key(ye, m) { return '(' + ye + ')&"-' + pad2_(m) + '"'; }
   function sp(parts) { return 'SUMPRODUCT(' + parts.join(',') + ')'; }
-  function detail(ye, m, t, biz, cat) {
+  function detail(ye, m, t, biz, cat, notCat) {
     var p = ['--(' + E + '$C$2:$C=' + key(ye, m) + ')', '--(' + E + '$D$2:$D="' + t + '")'];
     if (biz) p.push('--(' + E + '$E$2:$E="' + biz + '")');
     if (cat) p.push('--(' + E + '$F$2:$F="' + cat + '")');
+    if (notCat) p.push('--(' + E + '$F$2:$F<>"' + notCat + '")');
     p.push(E + '$J$2:$J');
     return sp(p);
   }
@@ -466,12 +467,12 @@ function buildSummary() {
     { id: 'v1', label: '=(' + Y + '-1)&"년 방문"', base: function (m) { return visits(Y + '-1', m); } },
     { id: 'y0', label: '=' + Y + '&"년 수입"', base: function (m) { return sales(Y, m); }, bg: '#FFF2CC', bold: true },
     { id: 'v0', label: '=' + Y + '&"년 방문"', base: function (m) { return visits(Y, m); }, bg: '#FFF2CC', bold: true },
-    { id: 'etc', label: '기타 수입', base: function (m) { return detail(Y, m, '수입', '개인'); }, bg: '#FFF2CC' },
+    { id: 'etc', label: '기타 수입', base: function (m) { return detail(Y, m, '수입', '개인', '', '대출·자금'); }, bg: '#FFF2CC' },
     { id: 'yoy', label: '작년대비', der: function (c) { return 'IF(' + c + '{y1}=0,"",(' + c + '{y0}-' + c + '{y1})/' + c + '{y1})'; }, pct: true, bg: '#FCE4D6' },
     { id: 'fix', label: '고정비', base: function (m) { return detail(Y, m, '지출', '사업', '고정비'); }, bg: '#DDEBF7' },
     { id: 'sup', label: '소모품', base: function (m) { return detail(Y, m, '지출', '사업', '소모품'); }, bg: '#FFF2CC' },
     { id: 'biz', label: '사업자', der: function (c) { return c + '{bot}-' + c + '{fix}-' + c + '{sup}'; }, bg: '#E2EFDA' },
-    { id: 'bot', label: '지출 계', base: function (m) { return detail(Y, m, '지출', '사업'); }, bg: '#FCE4D6', bold: true },
+    { id: 'bot', label: '지출 계', base: function (m) { return detail(Y, m, '지출', '사업', '', '창업·이전'); }, bg: '#FCE4D6', bold: true },
     { id: 'sal', label: '월 급여', der: function (c) { return c + '{y0}-' + c + '{bot}'; }, bg: '#F8CBAD', bold: true },
     { id: 'mar', label: '수익률', der: function (c) { return 'IF(' + c + '{y0}=0,"",' + c + '{sal}/' + c + '{y0})'; }, pct: true, bg: '#FFFF99', bold: true },
     { id: 'per', label: '개인지출', base: function (m) { return detail(Y, m, '지출', '개인'); }, bg: '#E2EFDA' },
@@ -480,7 +481,9 @@ function buildSummary() {
     { id: 'sav', label: '모으기', base: function (m) { return detail(Y, m, '저축·빚', '', '모으기'); }, bg: '#E4DFEC' },
     { id: 'yu', label: '노란우산공제', base: function (m) { return detail(Y, m, '저축·빚', '', '노란우산공제'); }, bg: '#FFF2CC' },
     { id: 'yuc', label: '노란우산 적립금', cum: function (m) { return sp(['--(' + E + '$C$2:$C<=' + key(Y, m) + ')', '--(' + E + '$D$2:$D="저축·빚")', '--(' + E + '$F$2:$F="노란우산공제")', E + '$J$2:$J']); }, bg: '#FFF2CC' },
-    { id: 'left', label: '남는 돈', der: function (c) { return c + '{sal}+' + c + '{etc}-' + c + '{per}-' + c + '{bor}-' + c + '{new}-' + c + '{sav}-' + c + '{yu}'; }, bg: '#FFF2CC', bold: true }
+    { id: 'left', label: '남는 돈', der: function (c) { return c + '{sal}+' + c + '{etc}-' + c + '{per}-' + c + '{bor}-' + c + '{new}-' + c + '{sav}-' + c + '{yu}'; }, bg: '#FFF2CC', bold: true },
+    { id: 'stp', label: '창업·이전 비용', base: function (m) { return detail(Y, m, '지출', '사업', '창업·이전'); }, bg: '#EDEDED' },
+    { id: 'fnd', label: '대출·자금', base: function (m) { return detail(Y, m, '수입', '개인', '대출·자금'); }, bg: '#EDEDED' }
   ];
   var START = 4;
   var rowNo = {};

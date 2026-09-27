@@ -113,6 +113,8 @@ def parse_month(ws, year, month):
             if amt and s(d):
                 if '빌린' in s(d):
                     cat, memo = '빌린 돈 갚기', s(b) or s(d)
+                elif '노란우산' in s(d):
+                    cat, memo = '노란우산공제', s(d) + (f' ({s(b)})' if s(b) else '')
                 else:
                     cat, memo = '모으기', s(d) + (f' ({s(b)})' if s(b) else '')
                 entries.append(dict(d=cur_date or first_day, t='move', biz=False, cat=cat, pay='',
@@ -172,7 +174,7 @@ def month_stats(entries, visits, ym):
             r['개인지출'] += e['amt']
         elif e['cat'] == '새출발기금':
             r['새출발'] += e['amt']
-        elif e['cat'] == '모으기':
+        elif e['cat'] in ('모으기', '노란우산공제'):
             r['모으기'] += e['amt']
         elif e['cat'] == '빌린 돈 갚기':
             r['빌린돈'] += e['amt']

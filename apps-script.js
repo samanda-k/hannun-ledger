@@ -1,5 +1,5 @@
 /**
- * 한눈 가계부 · 구글 시트 서버 코드 (버전 4)
+ * 한눈 가계부 · 구글 시트 서버 코드 (버전 5)
  *
  * 이 코드 전체를 Apps Script 편집기(Code.gs)에 붙여넣고 저장하세요.
  *  1) 함수 목록에서 setup 을 고르고 [실행] → 권한 허용
@@ -14,6 +14,9 @@ var ENTRY_SHEET = '내역';
 var VISIT_SHEET = '방문';
 var HIST_SHEET = '과거기록';
 var SUMMARY_SHEET = '연간요약';
+var BAL_SHEET = '잔고';
+var BAL_HEAD = ['월', '통장 잔고', '현금 잔고', '수정시각'];
+var SERVER_VER = 5;
 var ENTRY_HEAD = ['ID', '날짜', '월', '구분', '개인/사업', '분류', '결제수단', '공급가액', '부가세', '합계', '메모', '기록시각'];
 var VISIT_HEAD = ['날짜', '월', '방문자수', '수정시각'];
 var HIST_HEAD = ['연도', '월', '수입', '방문'];
@@ -65,6 +68,8 @@ function setup() {
 
   var h = ensureSheet_(HIST_SHEET, HIST_HEAD, [70, 50, 110, 70]);
   h.getRange('C:C').setNumberFormat('#,##0');
+
+  balSheet_();
 
   buildSummary();
   removeBlankDefaultSheet_();
@@ -135,6 +140,8 @@ function doPost(e) {
         entries: readEntries_(),
         visits: readVisits_(),
         hist: readHist_(),
+        bal: readBal_(),
+        ver: SERVER_VER,
         sheetUrl: SpreadsheetApp.getActive().getUrl()
       });
     }
@@ -235,18 +242,20 @@ function readHist_() {
 
 function applyOps_(ops) {
   // 같은 대상이 여러 번 바뀐 경우 마지막 것만 반영해요
-  var entries = {}, visits = {}, hist = {};
+  var entries = {}, visits = {}, hist = {}, bal = {};
   for (var i = 0; i < ops.length; i++) {
     var op = ops[i];
     if (!op || typeof op !== 'object') continue;
     if (op.op === 'upsert' && op.entry && op.entry.id) entries[String(op.entry.id)] = { entry: op.entry };
     else if (op.op === 'delete' && op.id) entries[String(op.id)] = { del: true };
     else if (op.op === 'visits' && op.d) visits[normDate_(op.d, 'Asia/Seoul')] = Math.max(0, Math.round(num_(op.n)));
+    else if (op.op === 'bal' && /^\d{4}-\d{2}$/.test(String(op.ym))) bal[String(op.ym)] = { bank: num_(op.bank), cash: num_(op.cash), hasBank: op.bank !== null && op.bank !== '', hasCash: op.cash !== null && op.cash !== '' };
     else if (op.op === 'hist' && op.y && op.m) hist[num_(op.y) + '-' + num_(op.m)] = { y: num_(op.y), m: num_(op.m), inc: num_(op.inc), vis: num_(op.vis) };
   }
   applyEntries_(entries);
   applyVisits_(visits);
   applyHist_(hist);
+  applyBal_(bal);
 }
 
 function applyEntries_(fin) {
@@ -300,6 +309,48 @@ function applyHist_(fin) {
   }
   writeRows_(sh, appends, dels, HIST_HEAD.length);
   sortRows_(sh, [{ column: 1, ascending: true }, { column: 2, ascending: true }]);
+}
+
+function balSheet_() {
+  var sh = SpreadsheetApp.getActive().getSheetByName(BAL_SHEET);
+  if (sh) return sh;
+  sh = ensureSheet_(BAL_SHEET, BAL_HEAD, [80, 120, 120, 140]);
+  sh.getRange('A:A').setNumberFormat('@');
+  sh.getRange('B:C').setNumberFormat('#,##0');
+  sh.getRange('D:D').setNumberFormat('yyyy-mm-dd hh:mm');
+  return sh;
+}
+
+function readBal_() {
+  var sh = SpreadsheetApp.getActive().getSheetByName(BAL_SHEET);
+  if (!sh || sh.getLastRow() < 2) return [];
+  var rows = sh.getRange(2, 1, sh.getLastRow() - 1, BAL_HEAD.length).getValues();
+  var tz = SpreadsheetApp.getActive().getSpreadsheetTimeZone();
+  var out = [];
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    var ym = r[0] instanceof Date ? Utilities.formatDate(r[0], tz, 'yyyy-MM') : String(r[0]).replace(/^\s+|\s+$/g, '');
+    if (!/^\d{4}-\d{2}$/.test(ym)) continue;
+    out.push({ ym: ym, bank: r[1] === '' ? null : num_(r[1]), cash: r[2] === '' ? null : num_(r[2]),
+      at: r[3] instanceof Date ? r[3].getTime() : 0 });
+  }
+  return out;
+}
+
+function applyBal_(fin) {
+  var keys = Object.keys(fin);
+  if (!keys.length) return;
+  var sh = balSheet_();
+  var rowOf = indexRows_(sh, function (r) { return r[0] instanceof Date ? Utilities.formatDate(r[0], 'Asia/Seoul', 'yyyy-MM') : String(r[0]); });
+  var appends = [];
+  for (var i = 0; i < keys.length; i++) {
+    var b = fin[keys[i]], r = rowOf[keys[i]];
+    var row = [keys[i], b.hasBank ? b.bank : '', b.hasCash ? b.cash : '', new Date()];
+    if (r) sh.getRange(r, 1, 1, row.length).setValues([row]);
+    else appends.push(row);
+  }
+  writeRows_(sh, appends, [], BAL_HEAD.length);
+  sortRows_(sh, [{ column: 1, ascending: true }]);
 }
 
 function indexRows_(sh, keyOf) {
@@ -427,7 +478,9 @@ function buildSummary() {
     { id: 'bor', label: '빌린 돈 갚기', base: function (m) { return detail(Y, m, '저축·빚', '', '빌린 돈 갚기'); }, bg: '#FCE4D6' },
     { id: 'new', label: '새출발기금', base: function (m) { return detail(Y, m, '저축·빚', '', '새출발기금'); }, bg: '#DDEBF7' },
     { id: 'sav', label: '모으기', base: function (m) { return detail(Y, m, '저축·빚', '', '모으기'); }, bg: '#E4DFEC' },
-    { id: 'left', label: '남는 돈', der: function (c) { return c + '{sal}+' + c + '{etc}-' + c + '{per}-' + c + '{bor}-' + c + '{new}-' + c + '{sav}'; }, bg: '#FFF2CC', bold: true }
+    { id: 'yu', label: '노란우산공제', base: function (m) { return detail(Y, m, '저축·빚', '', '노란우산공제'); }, bg: '#FFF2CC' },
+    { id: 'yuc', label: '노란우산 적립금', cum: function (m) { return sp(['--(' + E + '$C$2:$C<=' + key(Y, m) + ')', '--(' + E + '$D$2:$D="저축·빚")', '--(' + E + '$F$2:$F="노란우산공제")', E + '$J$2:$J']); }, bg: '#FFF2CC' },
+    { id: 'left', label: '남는 돈', der: function (c) { return c + '{sal}+' + c + '{etc}-' + c + '{per}-' + c + '{bor}-' + c + '{new}-' + c + '{sav}-' + c + '{yu}'; }, bg: '#FFF2CC', bold: true }
   ];
   var START = 4;
   var rowNo = {};
@@ -438,8 +491,8 @@ function buildSummary() {
   for (var r = 0; r < rows.length; r++) {
     var row = rows[r], rn = START + r, line = [];
     labels.push([row.label]);
-    for (var mi = 0; mi < 12; mi++) line.push('=' + (row.base ? row.base(mi + 1) : fill(row.der(cols[mi]))));
-    line.push('=' + (row.base ? 'SUM(B' + rn + ':M' + rn + ')' : fill(row.der('N'))));
+    for (var mi = 0; mi < 12; mi++) line.push('=' + (row.cum ? row.cum(mi + 1) : row.base ? row.base(mi + 1) : fill(row.der(cols[mi]))));
+    line.push('=' + (row.cum ? 'M' + rn : row.base ? 'SUM(B' + rn + ':M' + rn + ')' : fill(row.der('N'))));
     formulas.push(line);
   }
   sh.getRange(START, 1, rows.length, 1).setValues(labels);

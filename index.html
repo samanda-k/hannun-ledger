@@ -254,6 +254,16 @@ button.dayhead:hover{color:var(--ink)}
 .tot b{font-size:19px}
 .tot small{font-size:12px;color:var(--muted)}
 
+/* full table */
+.full{position:fixed;inset:0;z-index:30;background:var(--surface);display:flex;flex-direction:column;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)}
+.full-hd{display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid var(--line)}
+.full-hd .note{flex:1;min-width:0}
+.full-body{flex:1;overflow:auto;padding:2px}
+#fullScale{transform-origin:top left;width:max-content}
+#fullScale .ytable th:first-child,#fullScale .ytable td:first-child{position:static}
+#ytableBox{cursor:zoom-in}
+.ytable tr.cum td{color:var(--muted);font-size:12px}
+
 /* hist sheet */
 .histgrid{display:grid;grid-template-columns:auto 1fr 90px;gap:6px 10px;align-items:center}
 .histgrid .h{font-size:12px;color:var(--muted);font-weight:600}
@@ -330,7 +340,7 @@ const PAYS=['카드','계좌','현금'];
 const BIZ_OUT=['고정비','소모품','사업자'];
 const PERSONAL_OUT=['식비','카페·간식','장보기','교통','주거·관리비','통신','쇼핑','의료','문화·여가','경조사','교육','보험','기타'];
 const ETC_IN=['기타 수입','이자','환급','용돈','중고판매'];
-const MOVES=['모으기','새출발기금','빌린 돈 갚기'];
+const MOVES=['모으기','노란우산공제','새출발기금','빌린 돈 갚기'];
 const WD=['일','월','화','수','목','금','토'];
 const K={cfg:'hn-cfg',cache:'hn-cache',out:'hn-outbox',ui:'hn-ui'};
 const QR_LIB='https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
@@ -362,7 +372,7 @@ const S={
   mode:'setup',view:'month',y:T0.getFullYear(),m:T0.getMonth()+1,listTab:'all',
   entries:new Map(),visits:new Map(),hist:new Map(),
   byMonth:new Map(),visByMonth:new Map(),stats:new Map(),
-  sync:'idle',lastSync:0,sheetUrl:'',setupMsg:''
+  sync:'idle',lastSync:0,sheetUrl:'',setupMsg:'',bal:new Map(),oldServer:false
 };
 const ui=ls.get(K.ui,{});
 if(ui.view==='year')S.view='year';
@@ -380,7 +390,7 @@ function isSale(e){return e.t==='in'&&e.biz}
 function monthStats(y,m){
   const k=ymOf(y,m);
   if(S.stats.has(k))return S.stats.get(k);
-  const r={sales:0,salesN:0,sup:0,vat:0,visits:S.visByMonth.get(k)||0,etcIn:0,fix:0,sup2:0,bizEtc:0,bizOut:0,personal:0,loan:0,repay:0,save:0,
+  const r={sales:0,salesN:0,sup:0,vat:0,visits:S.visByMonth.get(k)||0,etcIn:0,fix:0,sup2:0,bizEtc:0,bizOut:0,personal:0,loan:0,repay:0,save:0,yu:0,
     items:{},pays:{},outCats:{},n:0,hist:false};
   for(const e of (S.byMonth.get(k)||[])){
     r.n++;
@@ -394,17 +404,19 @@ function monthStats(y,m){
       if(e.biz){r.bizOut+=e.amt;if(e.cat==='고정비')r.fix+=e.amt;else if(e.cat==='소모품')r.sup2+=e.amt;else r.bizEtc+=e.amt}
       else r.personal+=e.amt;
     }else if(e.t==='move'){
-      if(e.cat==='모으기')r.save+=e.amt;else if(e.cat==='새출발기금')r.repay+=e.amt;else r.loan+=e.amt;
+      if(e.cat==='모으기')r.save+=e.amt;else if(e.cat==='노란우산공제')r.yu+=e.amt;else if(e.cat==='새출발기금')r.repay+=e.amt;else r.loan+=e.amt;
     }
   }
   const h=S.hist.get(y+'-'+m);
   if(h){if(!r.sales&&h.inc){r.sales=h.inc;r.hist=true}if(!r.visits&&h.vis){r.visits=h.vis;r.hist=true}}
   r.salary=r.sales-r.bizOut;
   r.margin=r.sales?r.salary/r.sales:null;
-  r.left=r.salary+r.etcIn-r.personal-r.loan-r.repay-r.save;
+  r.left=r.salary+r.etcIn-r.personal-r.loan-r.repay-r.save-r.yu;
   S.stats.set(k,r);
   return r;
 }
+// 노란우산공제 적립금: 처음부터 그 달까지 넣은 금액 합계
+function yuCum(y,m){const k=ymOf(y,m);let t=0;for(const [mk,arr] of S.byMonth)if(mk<=k)for(const e of arr)if(e.t==='move'&&e.cat==='노란우산공제')t+=e.amt;return t}
 function yearHas(y){for(let m=1;m<=12;m++){const s=monthStats(y,m);if(s.sales||s.n)return true}return false}
 
 /* ───────── 저장소·동기화 ───────── */
@@ -412,17 +424,19 @@ function applyLocal(op){
   if(op.op==='upsert')S.entries.set(op.entry.id,op.entry);
   else if(op.op==='delete')S.entries.delete(op.id);
   else if(op.op==='visits'){if(op.n>0)S.visits.set(op.d,op.n);else S.visits.delete(op.d)}
+  else if(op.op==='bal'){S.bal.set(op.ym,{ym:op.ym,bank:op.bank,cash:op.cash,at:Date.now()})}
   else if(op.op==='hist'){const k=op.y+'-'+op.m;if(op.inc||op.vis)S.hist.set(k,{y:op.y,m:op.m,inc:op.inc,vis:op.vis});else S.hist.delete(k)}
 }
 function saveCache(){
   if(S.mode!=='live')return;
-  ls.set(K.cache,{entries:[...S.entries.values()],visits:[...S.visits],hist:[...S.hist.values()],sheetUrl:S.sheetUrl,at:S.lastSync});
+  ls.set(K.cache,{entries:[...S.entries.values()],visits:[...S.visits],hist:[...S.hist.values()],bal:[...S.bal.values()],sheetUrl:S.sheetUrl,at:S.lastSync});
 }
 function loadCache(){
   const c=ls.get(K.cache,null);if(!c)return false;
   S.entries=new Map((c.entries||[]).map(e=>[e.id,e]));
   S.visits=new Map(c.visits||[]);
   S.hist=new Map((c.hist||[]).map(h=>[h.y+'-'+h.m,h]));
+  S.bal=new Map((c.bal||[]).map(b=>[b.ym,b]));
   S.sheetUrl=c.sheetUrl||'';S.lastSync=c.at||0;
   outbox.forEach(applyLocal);reindex();return true;
 }
@@ -453,6 +467,8 @@ async function refresh(){
     S.entries=new Map(j.entries.map(e=>[e.id,e]));
     S.visits=new Map(j.visits.map(v=>[v.d,v.n]));
     S.hist=new Map((j.hist||[]).map(h=>[h.y+'-'+h.m,h]));
+    S.oldServer=!Array.isArray(j.bal);
+    if(!S.oldServer)S.bal=new Map(j.bal.map(b=>[b.ym,b]));
     S.sheetUrl=j.sheetUrl||S.sheetUrl;
     outbox.forEach(applyLocal);reindex();
     S.lastSync=Date.now();S.sync=outbox.length?'busy':'ok';
@@ -563,16 +579,58 @@ function renderMonth(){
     }
     h+='</div>';
   }
-  if(s.loan||s.repay||s.save||s.etcIn){
+  if(s.loan||s.repay||s.save||s.etcIn||s.yu){
+    const cum=yuCum(y,m);
     h+=`<section class="card"><h2>기타 수입 · 저축 · 빚</h2><div class="moves num" style="grid-template-columns:repeat(auto-fit,minmax(110px,1fr))">
       <div><span class="lbl">기타 수입</span><span class="val c-in">${won(s.etcIn)}</span></div>
       <div><span class="lbl">빌린 돈 갚기</span><span class="val c-move">${won(s.loan)}</span></div>
       <div><span class="lbl">새출발기금</span><span class="val c-move">${won(s.repay)}</span></div>
       <div><span class="lbl">모으기</span><span class="val c-move">${won(s.save)}</span></div>
+      <div><span class="lbl">노란우산공제</span><span class="val c-move">${won(s.yu)}</span>${cum?`<span class="lbl">적립금 ${won(cum)}</span>`:''}</div>
     </div></section>`;
   }
+  h+=balCard(y,m);
   h+=renderList(y,m);
   return h;
+}
+
+function balCard(y,m){
+  const k=ymOf(y,m);const b=S.bal.get(k);
+  let prevB=null;for(const [mk,v] of S.bal)if(mk<k&&(!prevB||mk>prevB.ym))prevB=v;
+  const has=v=>v!=null&&v!=='';
+  const bank=b&&has(b.bank)?b.bank:null,cash=b&&has(b.cash)?b.cash:null;
+  const sum=(bank||0)+(cash||0);
+  const when=b&&b.at?`<p class="note">${new Date(b.at).toLocaleString('ko-KR',{month:'numeric',day:'numeric',hour:'numeric',minute:'2-digit'})}에 고침</p>`
+    :(!b&&prevB?`<p class="note">지난 기록: ${Number(prevB.ym.slice(5))}월 통장 ${prevB.bank==null?'–':won(prevB.bank)} · 현금 ${prevB.cash==null?'–':won(prevB.cash)}</p>`:'');
+  return `<section class="card"><h2>${m}월 잔고<span><button type="button" class="ghost" id="editBal">${b?'수정':'입력'}</button></span></h2>
+    <div class="moves num">
+      <div><span class="lbl">통장 잔고</span><span class="val">${bank==null?'–':won(bank)}</span></div>
+      <div><span class="lbl">현금 잔고</span><span class="val">${cash==null?'–':won(cash)}</span></div>
+      <div><span class="lbl">합계</span><span class="val">${b?won(sum):'–'}</span></div>
+    </div>${when}
+    ${S.oldServer&&S.mode==='live'?'<p class="note" style="color:var(--biz)">잔고를 구글 시트에 저장하려면 시트 서버 코드 업데이트가 필요해요. 지금은 이 기기에만 보여요.</p>':''}
+  </section>`;
+}
+function openBal(){
+  const k=ymOf(S.y,S.m);const b=S.bal.get(k)||{};
+  M={kind:'bal',ym:k,bank:b.bank??null,cash:b.cash??null};drawModal();
+  setTimeout(()=>{const a=$('b-bank');if(a)a.focus()},80);
+}
+function balHTML(){
+  const v=x=>x==null||x===''?'':won(x);
+  return `<form class="sheet" id="sheet" autocomplete="off" role="dialog" aria-modal="true" aria-label="잔고 입력">
+    <div class="grab"></div>
+    <div class="hd"><h3>${Number(M.ym.slice(5))}월 잔고</h3><button type="button" class="iconbtn" data-close aria-label="닫기">✕</button></div>
+    <div class="field"><label for="b-bank">통장 잔고</label><div class="amountbox"><input id="b-bank" class="num" inputmode="numeric" placeholder="0" value="${v(M.bank)}"><span>원</span></div></div>
+    <div class="field"><label for="b-cash">현금 잔고</label><div class="amountbox"><input id="b-cash" class="num" inputmode="numeric" placeholder="0" value="${v(M.cash)}"><span>원</span></div></div>
+    <p class="note" style="margin:0">언제든 다시 고칠 수 있어요. 연간표에는 나오지 않아요.</p>
+    <div class="sheet-foot"><button type="submit" class="primary">저장</button></div>
+  </form>`;
+}
+function saveBal(){
+  const g=id=>{const t=$(id).value.replace(/[^\d]/g,'');return t===''?null:parseInt(t,10)};
+  const op={op:'bal',ym:M.ym,bank:g('b-bank'),cash:g('b-cash')};
+  closeModal();commit([op]);toast('잔고를 저장했어요');
 }
 
 function renderList(y,m){
@@ -656,6 +714,9 @@ function renderYear(){
   rows.push({label:'빌린 돈 갚기',vals:cur.map(x=>x.loan)});
   rows.push({label:'새출발기금',vals:cur.map(x=>x.repay)});
   rows.push({label:'모으기',vals:cur.map(x=>x.save)});
+  rows.push({label:'노란우산공제',vals:cur.map(x=>x.yu)});
+  {const cm=cur.map((_,i)=>(!isCurY||i<upto)?yuCum(Y,i+1):null);const last=[...cm].reverse().find(v=>v!=null)||0;
+   if(last)rows.push({label:'└ 적립금',cum:cm,tot:last,cls:'cum'});}
   rows.push({label:'남는 돈',vals:cur.map(x=>x.left),cls:'strong',neg:true});
 
   const td=(v,r,x='')=>{
@@ -663,13 +724,13 @@ function renderYear(){
     if(!v)return `<td class="dim ${x}">–</td>`;
     return `<td class="${r.neg&&v<0?'neg':''} ${x}">${sgn(v)}</td>`;
   };
-  h+=`<section class="card"><h2>연간표<span><button type="button" class="ghost" id="openHist">지난 해 합계 입력</button></span></h2><div class="tablebox"><table class="ytable num"><thead><tr><th>구분</th>${cur.map((_,i)=>`<th data-month="${i+1}">${i+1}월</th>`).join('')}<th>합계</th></tr></thead><tbody>`+
+  h+=`<section class="card"><h2>연간표<span style="display:flex;gap:6px;flex-wrap:wrap"><button type="button" class="ghost" id="openFull">크게 보기</button><button type="button" class="ghost" id="openHist">지난 해 합계 입력</button></span></h2><div class="tablebox" id="ytableBox" title="누르면 크게 봐요"><table class="ytable num"><thead><tr><th>구분</th>${cur.map((_,i)=>`<th data-month="${i+1}">${i+1}월</th>`).join('')}<th>합계</th></tr></thead><tbody>`+
     rows.map(r=>{
       if(r.sec)return `<tr class="sec"><td>${r.sec}</td><td colspan="13"></td></tr>`;
-      const tot=r.pct?r.tot:r.vals.reduce((a,b)=>a+b,0);
-      return `<tr class="${r.cls||''}"><td>${r.label}</td>${(r.pct||r.vals).map(v=>td(v,r)).join('')}${td(tot,r,'tot')}</tr>`;
+      const tot=r.pct||r.cum?r.tot:r.vals.reduce((a,b)=>a+b,0);
+      return `<tr class="${r.cls||''}"><td>${r.label}</td>${(r.pct||r.cum||r.vals).map(v=>td(v,r)).join('')}${td(tot,r,'tot')}</tr>`;
     }).join('')+`</tbody></table></div>
-    <p class="note">작년대비 = (올해 − 작년) ÷ 작년. 월 급여 = 매출 − 지출 계. 남는 돈 = 월 급여 + 기타 수입 − 개인지출 − 빌린 돈 갚기 − 새출발기금 − 모으기. 상세 기록이 없는 달은 ‘지난 해 합계 입력’ 값을 써요.</p></section>`;
+    <p class="note">작년대비 = (올해 − 작년) ÷ 작년. 월 급여 = 매출 − 지출 계. 남는 돈 = 월 급여 + 기타 수입 − 개인지출 − 빌린 돈 갚기 − 새출발기금 − 모으기 − 노란우산공제. 적립금은 지금까지 넣은 노란우산공제 합계예요. 상세 기록이 없는 달은 ‘지난 해 합계 입력’ 값을 써요.</p></section>`;
   return h;
 }
 
@@ -958,19 +1019,51 @@ async function drawQr(){
 function drawModal(){
   if(!M){$('modal').innerHTML='';return}
   const old=document.querySelector('#modal .sheet');const top=old?old.scrollTop:0;
-  const html=M.kind==='sales'?salesHTML():M.kind==='entry'?entryHTML():M.kind==='hist'?histHTML():settingsHTML();
+  if(M.kind==='full')return drawFull();
+  const html=M.kind==='sales'?salesHTML():M.kind==='entry'?entryHTML():M.kind==='hist'?histHTML():M.kind==='bal'?balHTML():settingsHTML();
   $('modal').innerHTML=`<div class="scrim" id="scrim">${html}</div>`;
   const sh=document.querySelector('#modal .sheet');if(sh)sh.scrollTop=top;
   document.documentElement.style.overflow='hidden';
   if(M.kind==='settings'&&M.qr)drawQr();
 }
-function closeModal(){M=null;$('modal').innerHTML='';document.documentElement.style.overflow=''}
+function closeModal(){
+  const wasFull=M&&M.kind==='full';
+  M=null;$('modal').innerHTML='';document.documentElement.style.overflow='';
+  if(wasFull){try{screen.orientation&&screen.orientation.unlock&&screen.orientation.unlock()}catch(e){}if(document.fullscreenElement)document.exitFullscreen().catch(()=>{})}
+}
+/* 연간표 크게 보기: 표 전체를 화면 너비에 맞춰 보여줘요 */
+function openFull(){
+  const t=document.querySelector('#ytableBox table');if(!t)return;
+  M={kind:'full',html:t.outerHTML};drawFull();
+  const el=document.documentElement;
+  if(el.requestFullscreen)el.requestFullscreen().then(()=>{if(screen.orientation&&screen.orientation.lock)return screen.orientation.lock('landscape')}).catch(()=>{});
+}
+function drawFull(){
+  $('modal').innerHTML=`<div class="full" role="dialog" aria-modal="true" aria-label="연간표 크게 보기">
+    <div class="full-hd"><b>${S.y}년 연간표</b><span class="note" style="margin:0">휴대폰을 가로로 돌리면 더 크게 보여요</span><button type="button" class="iconbtn" data-close aria-label="닫기">✕</button></div>
+    <div class="full-body" id="fullBody"><div id="fullScale">${M.html}</div></div></div>`;
+  document.documentElement.style.overflow='hidden';
+  fitFull();
+}
+function fitFull(){
+  const body=$('fullBody'),box=$('fullScale');if(!body||!box)return;
+  const t=box.querySelector('table');t.style.width='max-content';t.style.minWidth='0';box.style.zoom='1';box.style.transform='';
+  const W=body.clientWidth-6,H=body.clientHeight-6,tw=t.offsetWidth,th=t.offsetHeight;
+  // 세로로 든 폰이면 표를 옆으로 눕혀서 긴 쪽을 써요 (폰을 돌려서 보면 돼요)
+  const turn=H>W&&Math.min(H/tw,W/th)>Math.min(W/tw,H/th)*1.3;
+  const sc=Math.min(1,turn?Math.min(H/tw,W/th)*0.96:W/tw);
+  box.style.zoom=String(sc);
+  box.style.transform=turn?'rotate(90deg) translateY(-100%)':'';
+  body.style.overflow=turn?'hidden':'auto';
+  const hint=document.querySelector('.full-hd .note');if(hint)hint.textContent=turn?'폰을 옆으로 돌려서 보세요':'두 손가락으로 벌리면 더 크게 보여요';
+}
+window.addEventListener('resize',()=>{if(M&&M.kind==='full')fitFull()});
 function lineOf(el){const k=el.closest('.line');return k?M.lines.find(l=>l.key===k.dataset.k):null}
 
 /* ───────── 이벤트 ───────── */
 document.addEventListener('input',ev=>{
   const t=ev.target;
-  if(t.matches('#f-amt,[data-la],[data-hi]')){const v=parseAmt(t.value);t.value=v?won(v):''}
+  if(t.matches('#f-amt,[data-la],[data-hi],#b-bank,#b-cash')){const v=parseAmt(t.value);t.value=v?won(v):''}
   if(!M)return;
   if(M.kind==='sales'){
     const l=lineOf(t);
@@ -994,12 +1087,13 @@ document.addEventListener('submit',ev=>{
   ev.preventDefault();
   if(ev.target.id==='setupForm')return connect();
   if(!M)return;
-  if(M.kind==='sales')saveSales();else if(M.kind==='entry')saveEntry(false);else if(M.kind==='hist')saveHist();
+  if(M.kind==='sales')saveSales();else if(M.kind==='entry')saveEntry(false);else if(M.kind==='hist')saveHist();else if(M.kind==='bal')saveBal();
 });
 document.addEventListener('keydown',ev=>{if(ev.key==='Escape'&&M)closeModal()});
 document.addEventListener('click',ev=>{
   const t=ev.target;
   if(t.id==='scrim'){closeModal();return}
+  if(!M&&t.closest('#ytableBox')&&!t.closest('[data-month]'))return openFull();
   const b=t.closest('button,[data-month]');if(!b)return;
 
   if(M&&b.closest('#modal')){
@@ -1057,6 +1151,8 @@ document.addEventListener('click',ev=>{
   if(b.id==='v-year'){S.view='year';ls.set(K.ui,{view:'year'});return render()}
   if(b.id==='prev'||b.id==='next'){const d=b.id==='prev'?-1:1;if(S.view==='year')S.y+=d;else{S.m+=d;if(S.m<1){S.m=12;S.y--}if(S.m>12){S.m=1;S.y++}}return render()}
   if(b.id==='openHist')return openHist(S.y-1);
+  if(b.id==='openFull')return openFull();
+  if(b.id==='editBal')return openBal();
   if(b.dataset.tab){S.listTab=b.dataset.tab;return render()}
   if(b.dataset.sales)return openSales(b.dataset.sales);
   if(b.dataset.edit){const e=S.entries.get(b.dataset.edit);if(e)openEntry(e);return}

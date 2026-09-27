@@ -234,6 +234,7 @@ def main():
     _t = dt.date.today()
     ap.add_argument('--until', default=f'{_t.year}-{_t.month:02d}-{calendar.monthrange(_t.year, _t.month)[1]:02d}', help='이 날짜까지만 가져오기 (기본: 이번 달 말일)')
     ap.add_argument('--months', default='', help='가져올 달 (예: 1-9). 비우면 --until 까지 전부')
+    ap.add_argument('--skip', action='append', default=[], help='빼고 넣을 것 "월:분류" (예: "7월:빌린 돈 갚기" = 7월 시트의 빌린 돈 갚기 줄 빼기)')
     args = ap.parse_args()
 
     wb = openpyxl.load_workbook(args.xlsx, data_only=True)
@@ -260,6 +261,11 @@ def main():
         visits.update(v)
         checks[m] = c
     entries = [e for e in entries if e['d'] <= args.until]
+    for spec in args.skip:
+        sheet, _, cat = spec.partition(':')
+        before = len(entries)
+        entries = [e for e in entries if not (e['src'].split('!')[0] == sheet and e['cat'] == cat)]
+        print(f'빼고 넣기: {sheet} {cat} {before - len(entries)}건')
     visits = {d: n for d, n in visits.items() if d <= args.until}
     assign_ids(entries)
     tot = total_sheet_values(wb, year)

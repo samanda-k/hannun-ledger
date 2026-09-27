@@ -670,12 +670,13 @@ function recLastAmt(r){let best=null;for(const e of S.entries.values())if(recMat
 function recDue(ym){return [...S.rec.values()].filter(r=>r.on!==false&&(!r.from||r.from<=ym)&&!recDone(r,ym)).sort((a,b)=>a.day-b.day||a.name.localeCompare(b.name))}
 function recCard(y,m){
   const ym=ymOf(y,m),curYm=ymOf(T0.getFullYear(),T0.getMonth()+1);
-  if(!S.rec.size||ym>curYm)return '';
+  if(!S.rec.size)return '';
   const due=recDue(ym);if(!due.length)return '';
   const dr=S.recDraft[ym]||(S.recDraft[ym]={});
-  due.forEach(r=>{if(!dr[r.id])dr[r.id]={on:ym<curYm||r.day<=T0.getDate(),amt:r.vary?recLastAmt(r):r.amt}});
+  // 지난달은 모두, 이번 달은 날짜가 지난 것만, 다음 달부터는 꺼진 채로 (미리 골라 넣을 수 있어요)
+  due.forEach(r=>{if(!dr[r.id])dr[r.id]={on:ym<curYm||(ym===curYm&&r.day<=T0.getDate()),amt:r.vary?recLastAmt(r):r.amt}});
   const n=due.filter(r=>dr[r.id].on&&dr[r.id].amt).length;
-  return `<section class="card reccard"><h2>${m}월 고정 지출 · 아직 안 넣은 ${due.length}건<span><button type="button" class="ghost" id="recManage">관리</button></span></h2>
+  return `<section class="card reccard"><h2>${m}월 고정 지출 · ${ym>curYm?'미리 넣기 ':''}아직 안 넣은 ${due.length}건<span><button type="button" class="ghost" id="recManage">관리</button></span></h2>
     <div class="recrows">${due.map(r=>{const d=dr[r.id];return `<div class="recrow"><label class="reccheck"><input type="checkbox" data-rc-on="${esc(r.id)}" ${d.on?'checked':''}><span><b>${esc(r.name)}</b><small>${r.day}일 · ${recKind(r)} ${esc(r.cat)}${r.vary?' · <em>금액 확인</em>':''}</small></span></label><div class="amountbox sm"><input class="num" inputmode="numeric" data-rc-amt="${esc(r.id)}" value="${d.amt?won(d.amt):''}" aria-label="${esc(r.name)} 금액"><span>원</span></div></div>`}).join('')}</div>
     <button type="button" class="primary" id="recAdd" style="width:100%;margin-top:10px" ${n?'':'disabled'}>선택한 ${n}건 넣기</button>
   </section>`;

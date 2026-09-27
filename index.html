@@ -543,7 +543,9 @@ function renderMonth(){
   if(s.vat)h+=`<div class="vatline num">부가세 포함 매출 ${won(s.sup+s.vat)}원 · 공급가액 ${won(s.sup)}원 · 부가세 ${won(s.vat)}원 (부가세 신고 참고)</div>`;
 
   const items=Object.entries(s.items).sort((a,b)=>b[1].amt-a[1].amt);
-  const outs=Object.entries(s.outCats).sort((a,b)=>b[1]-a[1]);
+  // 사업 지출은 위에 고정비 → 소모품 → 사업자 순서로, 개인지출은 그 아래 금액 순으로
+  const bizRank=k=>{const i=BIZ_OUT.indexOf(k.slice(2));return k[0]==='B'?(i<0?BIZ_OUT.length:i):99};
+  const outs=Object.entries(s.outCats).sort((a,b)=>(bizRank(a[0])-bizRank(b[0]))||(b[1]-a[1]));
   if(items.length||outs.length){
     h+='<div class="tiles" style="grid-template-columns:repeat(auto-fit,minmax(300px,1fr))">';
     if(items.length){
@@ -555,7 +557,7 @@ function renderMonth(){
       </section>`;
     }
     if(outs.length){
-      const top=outs[0][1],tot=s.bizOut+s.personal||1;
+      const top=Math.max(...outs.map(o=>o[1])),tot=s.bizOut+s.personal||1;
       h+=`<section class="card"><h2>지출 분류<span class="num">${won(s.bizOut+s.personal)}원</span></h2><div class="bars num">${outs.map(([k,v])=>{const b=k[0]==='B';
         return `<div class="bar"><span class="name">${b?'<span class="tag biz">사업</span> ':''}${esc(k.slice(2))}</span><span class="track"><span class="fill ${b?'biz':'out'}" style="width:${Math.max(2,v/top*100)}%"></span></span><span class="amt">${won(v)}<span class="pct">${Math.round(v/tot*100)}%</span></span></div>`}).join('')}</div></section>`;
     }

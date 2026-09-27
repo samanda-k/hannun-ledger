@@ -195,6 +195,12 @@ def parse_month(ws, year, month):
             if not pay and not item:
                 pay, item = '계좌', '시술'     # 결제구분·적요가 빈 매출 줄 (사장님 확인: 계좌 시술)
                 check['빈매출줄'] += total
+            if total < 0:
+                # 환불은 시트에 음수를 못 넣어서 '매출 환불'로 적고 매출에서 빼요
+                entries.append(dict(d=date, t='out', biz=True, cat='매출 환불', pay=pay, sup=0, vat=0, amt=-total,
+                                    memo=item, src=f'{ws.title}!{i}'))
+                check['매출'] += total
+                continue
             sup = num(get('sup'))
             sup = int(round(sup)) if sup else 0
             entries.append(dict(d=date, t='in', biz=True, cat=item or '기타', pay=pay, sup=sup,
@@ -262,7 +268,9 @@ def month_stats(entries, visits, ym):
             else:
                 r['기타수입'] += a
         elif e['t'] == 'out':
-            if c == '창업·이전':
+            if c == '매출 환불':
+                r['수입'] -= a
+            elif c == '창업·이전':
                 r['창업이전'] += a
             elif e['biz']:
                 r[c if c in ('고정비', '소모품') else '사업자'] += a

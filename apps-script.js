@@ -448,14 +448,14 @@ function buildSummary() {
     var p = ['--(' + E + '$C$2:$C=' + key(ye, m) + ')', '--(' + E + '$D$2:$D="' + t + '")'];
     if (biz) p.push('--(' + E + '$E$2:$E="' + biz + '")');
     if (cat) p.push('--(' + E + '$F$2:$F="' + cat + '")');
-    if (notCat) p.push('--(' + E + '$F$2:$F<>"' + notCat + '")');
+    (notCat ? [].concat(notCat) : []).forEach(function (nc) { p.push('--(' + E + '$F$2:$F<>"' + nc + '")'); });
     p.push(E + '$J$2:$J');
     return sp(p);
   }
   function histv(ye, m, col) {
     return sp(['--(' + H + '$A$2:$A=' + ye + ')', '--(' + H + '$B$2:$B=' + m + ')', H + '$' + col + '$2:$' + col]);
   }
-  function sales(ye, m) { return 'LET(dv,' + detail(ye, m, '수입', '사업') + ',IF(dv<>0,dv,' + histv(ye, m, 'C') + '))'; }
+  function sales(ye, m) { return 'LET(dv,' + detail(ye, m, '수입', '사업') + '-' + detail(ye, m, '지출', '사업', '매출 환불') + ',IF(dv<>0,dv,' + histv(ye, m, 'C') + '))'; }
   function visits(ye, m) { return 'LET(dv,' + sp(['--(' + V + '$B$2:$B=' + key(ye, m) + ')', V + '$C$2:$C']) + ',IF(dv<>0,dv,' + histv(ye, m, 'D') + '))'; }
 
   // base = 달마다 계산(합계 열은 SUM), der = 같은 열의 다른 줄로 계산
@@ -472,7 +472,7 @@ function buildSummary() {
     { id: 'fix', label: '고정비', base: function (m) { return detail(Y, m, '지출', '사업', '고정비'); }, bg: '#DDEBF7' },
     { id: 'sup', label: '소모품', base: function (m) { return detail(Y, m, '지출', '사업', '소모품'); }, bg: '#FFF2CC' },
     { id: 'biz', label: '사업자', der: function (c) { return c + '{bot}-' + c + '{fix}-' + c + '{sup}'; }, bg: '#E2EFDA' },
-    { id: 'bot', label: '지출 계', base: function (m) { return detail(Y, m, '지출', '사업', '', '창업·이전'); }, bg: '#FCE4D6', bold: true },
+    { id: 'bot', label: '지출 계', base: function (m) { return detail(Y, m, '지출', '사업', '', ['창업·이전', '매출 환불']); }, bg: '#FCE4D6', bold: true },
     { id: 'sal', label: '월 급여', der: function (c) { return c + '{y0}-' + c + '{bot}'; }, bg: '#F8CBAD', bold: true },
     { id: 'mar', label: '수익률', der: function (c) { return 'IF(' + c + '{y0}=0,"",' + c + '{sal}/' + c + '{y0})'; }, pct: true, bg: '#FFFF99', bold: true },
     { id: 'per', label: '개인지출', base: function (m) { return detail(Y, m, '지출', '개인'); }, bg: '#E2EFDA' },

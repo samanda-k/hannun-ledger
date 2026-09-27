@@ -1,1 +1,7 @@
 ledger.html
+# 개인 데이터가 공개 저장소에 올라가지 않도록
+*.xlsx
+*.xls
+*.xlsm
+*.csv
+연결정보.txt

@@ -330,7 +330,7 @@ const PAYS=['카드','계좌','현금'];
 const BIZ_OUT=['고정비','소모품','사업자'];
 const PERSONAL_OUT=['식비','카페·간식','장보기','교통','주거·관리비','통신','쇼핑','의료','문화·여가','경조사','교육','보험','기타'];
 const ETC_IN=['기타 수입','이자','환급','용돈','중고판매'];
-const MOVES=['모으기','새출발기금','빌린 돈'];
+const MOVES=['모으기','새출발기금','빌린 돈 갚기'];
 const WD=['일','월','화','수','목','금','토'];
 const K={cfg:'hn-cfg',cache:'hn-cache',out:'hn-outbox',ui:'hn-ui'};
 const QR_LIB='https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
@@ -343,6 +343,7 @@ const won=n=>Math.round(Math.abs(n)).toLocaleString('ko-KR');
 const sgn=n=>(n<0?'−':'')+won(n);
 const man=n=>{const a=Math.abs(n);if(a>=1e8)return (n/1e8).toFixed(1).replace(/\.0$/,'')+'억';if(a>=1e4)return Math.round(n/1e4).toLocaleString('ko-KR')+'만';return won(n)};
 const pctTxt=x=>x==null?'–':(x>0?'+':x<0?'−':'')+Math.abs(Math.round(x*100))+'%';
+const normUrl=u=>String(u||'').trim().replace(/\/macros\/u\/\d+\/s\//,'/macros/s/');
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,8);
 const parseAmt=v=>parseInt(String(v).replace(/[^\d]/g,'').slice(0,12),10)||0;
 const vatOf=a=>{const sup=Math.round(a/1.1);return {sup,vat:a-sup}};
@@ -379,7 +380,7 @@ function isSale(e){return e.t==='in'&&e.biz}
 function monthStats(y,m){
   const k=ymOf(y,m);
   if(S.stats.has(k))return S.stats.get(k);
-  const r={sales:0,salesN:0,sup:0,vat:0,visits:S.visByMonth.get(k)||0,etcIn:0,fix:0,sup2:0,bizEtc:0,bizOut:0,personal:0,borrow:0,repay:0,save:0,
+  const r={sales:0,salesN:0,sup:0,vat:0,visits:S.visByMonth.get(k)||0,etcIn:0,fix:0,sup2:0,bizEtc:0,bizOut:0,personal:0,loan:0,repay:0,save:0,
     items:{},pays:{},outCats:{},n:0,hist:false};
   for(const e of (S.byMonth.get(k)||[])){
     r.n++;
@@ -393,14 +394,14 @@ function monthStats(y,m){
       if(e.biz){r.bizOut+=e.amt;if(e.cat==='고정비')r.fix+=e.amt;else if(e.cat==='소모품')r.sup2+=e.amt;else r.bizEtc+=e.amt}
       else r.personal+=e.amt;
     }else if(e.t==='move'){
-      if(e.cat==='빌린 돈')r.borrow+=e.amt;else if(e.cat==='모으기')r.save+=e.amt;else r.repay+=e.amt;
+      if(e.cat==='모으기')r.save+=e.amt;else if(e.cat==='새출발기금')r.repay+=e.amt;else r.loan+=e.amt;
     }
   }
   const h=S.hist.get(y+'-'+m);
   if(h){if(!r.sales&&h.inc){r.sales=h.inc;r.hist=true}if(!r.visits&&h.vis){r.visits=h.vis;r.hist=true}}
   r.salary=r.sales-r.bizOut;
   r.margin=r.sales?r.salary/r.sales:null;
-  r.left=r.salary+r.etcIn+r.borrow-r.personal-r.repay-r.save;
+  r.left=r.salary+r.etcIn-r.personal-r.loan-r.repay-r.save;
   S.stats.set(k,r);
   return r;
 }
@@ -560,10 +561,10 @@ function renderMonth(){
     }
     h+='</div>';
   }
-  if(s.borrow||s.repay||s.save||s.etcIn){
+  if(s.loan||s.repay||s.save||s.etcIn){
     h+=`<section class="card"><h2>기타 수입 · 저축 · 빚</h2><div class="moves num" style="grid-template-columns:repeat(auto-fit,minmax(110px,1fr))">
       <div><span class="lbl">기타 수입</span><span class="val c-in">${won(s.etcIn)}</span></div>
-      <div><span class="lbl">빌린 돈</span><span class="val">${won(s.borrow)}</span></div>
+      <div><span class="lbl">빌린 돈 갚기</span><span class="val c-move">${won(s.loan)}</span></div>
       <div><span class="lbl">새출발기금</span><span class="val c-move">${won(s.repay)}</span></div>
       <div><span class="lbl">모으기</span><span class="val c-move">${won(s.save)}</span></div>
     </div></section>`;
@@ -600,7 +601,7 @@ function rowHTML(e){
   if(isSale(e)){
     return `<button type="button" class="row" data-sales="${e.d}"><span class="l"><span class="memo">${esc(e.cat)}${e.memo?` · ${esc(e.memo)}`:''}</span><span class="meta"><span class="tag sale">${esc(e.pay||'매출')}</span>${e.vat?`<span class="num">공급가 ${won(e.sup)} · 부가세 ${won(e.vat)}</span>`:'<span>부가세 없음</span>'}</span></span><span class="amt num c-in">+${won(e.amt)}</span></button>`;
   }
-  const isIn=e.t==='in'||(e.t==='move'&&e.cat==='빌린 돈');
+  const isIn=e.t==='in';
   const tag=e.t==='move'?'<span class="tag move">저축·빚</span>':e.biz?'<span class="tag biz">사업</span>':'';
   return `<button type="button" class="row" data-edit="${esc(e.id)}"><span class="l"><span class="memo">${esc(e.memo||e.cat)}</span><span class="meta">${tag}<span class="tag">${esc(e.cat)}</span>${e.pay?`<span>${esc(e.pay)}</span>`:''}</span></span><span class="amt num ${e.t==='move'?'c-move':isIn?'c-in':'c-out'}">${isIn?'+':'−'}${won(e.amt)}</span></button>`;
 }
@@ -650,7 +651,7 @@ function renderYear(){
   rows.push({sec:'개인 · 저축 · 빚'});
   rows.push({label:'기타 수입',vals:cur.map(x=>x.etcIn)});
   rows.push({label:'개인지출',vals:cur.map(x=>x.personal)});
-  rows.push({label:'빌린 돈',vals:cur.map(x=>x.borrow)});
+  rows.push({label:'빌린 돈 갚기',vals:cur.map(x=>x.loan)});
   rows.push({label:'새출발기금',vals:cur.map(x=>x.repay)});
   rows.push({label:'모으기',vals:cur.map(x=>x.save)});
   rows.push({label:'남는 돈',vals:cur.map(x=>x.left),cls:'strong',neg:true});
@@ -666,7 +667,7 @@ function renderYear(){
       const tot=r.pct?r.tot:r.vals.reduce((a,b)=>a+b,0);
       return `<tr class="${r.cls||''}"><td>${r.label}</td>${(r.pct||r.vals).map(v=>td(v,r)).join('')}${td(tot,r,'tot')}</tr>`;
     }).join('')+`</tbody></table></div>
-    <p class="note">작년대비 = (올해 − 작년) ÷ 작년. 월 급여 = 매출 − 지출 계. 남는 돈 = 월 급여 + 기타 수입 + 빌린 돈 − 개인지출 − 새출발기금 − 모으기. 상세 기록이 없는 달은 ‘지난 해 합계 입력’ 값을 써요.</p></section>`;
+    <p class="note">작년대비 = (올해 − 작년) ÷ 작년. 월 급여 = 매출 − 지출 계. 남는 돈 = 월 급여 + 기타 수입 − 개인지출 − 빌린 돈 갚기 − 새출발기금 − 모으기. 상세 기록이 없는 달은 ‘지난 해 합계 입력’ 값을 써요.</p></section>`;
   return h;
 }
 
@@ -733,6 +734,7 @@ async function connect(){
   const err=$('s-err');err.textContent='';
   let c=parseLink($('s-link').value.trim());
   if(!c)c={url:$('s-url').value.trim(),token:$('s-token').value.trim()};
+  c.url=normUrl(c.url);
   if(!/^https:\/\/script\.google\.com\/.+\/exec$/.test(c.url)){err.textContent='웹 앱 URL은 https://script.google.com/ 으로 시작해서 /exec 로 끝나야 해요.';return}
   if(!c.token){err.textContent='비밀코드를 입력해 주세요.';return}
   const btn=$('s-go');btn.disabled=true;btn.textContent='연결하는 중…';
@@ -850,7 +852,7 @@ function recents(){
 }
 function entryHTML(){
   const f=M.f;const rc=M.editing?[]:recents();M.rc=rc;
-  const hintMove={'모으기':'모으기는 남는 돈에서 빠져요.','새출발기금':'새출발기금 상환은 남는 돈에서 빠져요.','빌린 돈':'빌린 돈은 남는 돈에 더해져요.'}[f.cat]||'모으기·새출발기금은 남는 돈에서 빠지고, 빌린 돈은 더해져요.';
+  const hintMove={'모으기':'모으기는 남는 돈에서 빠져요.','새출발기금':'새출발기금 상환은 남는 돈에서 빠져요.','빌린 돈 갚기':'빌린 돈 갚은 금액은 남는 돈에서 빠져요.'}[f.cat]||'모으기·새출발기금·빌린 돈 갚기는 모두 남는 돈에서 빠져요.';
   return `<form class="sheet" id="sheet" autocomplete="off" role="dialog" aria-modal="true" aria-label="지출·기타 기록">
     <div class="grab"></div>
     <div class="hd"><h3>${M.editing?'기록 고치기':'지출·기타 기록'}</h3><button type="button" class="iconbtn" data-close aria-label="닫기">✕</button></div>
@@ -1112,8 +1114,10 @@ function startDemo(){
 
 /* ───────── 시작 ───────── */
 (function boot(){
+  // 구글 계정이 여러 개일 때 붙는 /u/2/ 같은 부분은 다른 기기에서 안 열려서 빼요
+  if(cfg&&normUrl(cfg.url)!==cfg.url){cfg.url=normUrl(cfg.url);ls.set(K.cfg,cfg)}
   const link=parseLink(location.hash);
-  if(link){history.replaceState(null,'',location.pathname+location.search);
+  if(link){link.url=normUrl(link.url);history.replaceState(null,'',location.pathname+location.search);
     if(/^https:\/\/script\.google\.com\/.+\/exec$/.test(link.url)){cfg=link;ls.set(K.cfg,cfg);setTimeout(()=>toast('이 기기를 가계부에 연결했어요'),300)}}
   if(cfg)startLive();else render();
 })();

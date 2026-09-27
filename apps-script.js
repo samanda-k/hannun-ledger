@@ -1,5 +1,5 @@
 /**
- * 한눈 가계부 · 구글 시트 서버 코드 (버전 3)
+ * 한눈 가계부 · 구글 시트 서버 코드 (버전 4)
  *
  * 이 코드 전체를 Apps Script 편집기(Code.gs)에 붙여넣고 저장하세요.
  *  1) 함수 목록에서 setup 을 고르고 [실행] → 권한 허용
@@ -424,10 +424,10 @@ function buildSummary() {
     { id: 'sal', label: '월 급여', der: function (c) { return c + '{y0}-' + c + '{bot}'; }, bg: '#F8CBAD', bold: true },
     { id: 'mar', label: '수익률', der: function (c) { return 'IF(' + c + '{y0}=0,"",' + c + '{sal}/' + c + '{y0})'; }, pct: true, bg: '#FFFF99', bold: true },
     { id: 'per', label: '개인지출', base: function (m) { return detail(Y, m, '지출', '개인'); }, bg: '#E2EFDA' },
-    { id: 'bor', label: '빌린 돈', base: function (m) { return detail(Y, m, '저축·빚', '', '빌린 돈'); }, bg: '#FCE4D6' },
+    { id: 'bor', label: '빌린 돈 갚기', base: function (m) { return detail(Y, m, '저축·빚', '', '빌린 돈 갚기'); }, bg: '#FCE4D6' },
     { id: 'new', label: '새출발기금', base: function (m) { return detail(Y, m, '저축·빚', '', '새출발기금'); }, bg: '#DDEBF7' },
     { id: 'sav', label: '모으기', base: function (m) { return detail(Y, m, '저축·빚', '', '모으기'); }, bg: '#E4DFEC' },
-    { id: 'left', label: '남는 돈', der: function (c) { return c + '{sal}+' + c + '{etc}+' + c + '{bor}-' + c + '{per}-' + c + '{new}-' + c + '{sav}'; }, bg: '#FFF2CC', bold: true }
+    { id: 'left', label: '남는 돈', der: function (c) { return c + '{sal}+' + c + '{etc}-' + c + '{per}-' + c + '{bor}-' + c + '{new}-' + c + '{sav}'; }, bg: '#FFF2CC', bold: true }
   ];
   var START = 4;
   var rowNo = {};

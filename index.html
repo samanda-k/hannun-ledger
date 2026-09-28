@@ -254,6 +254,24 @@ button.dayhead:hover{color:var(--ink)}
 .tot b{font-size:19px}
 .tot small{font-size:12px;color:var(--muted)}
 
+/* 달력 */
+.seg.sm{padding:2px;border-radius:9px;margin-left:8px;vertical-align:middle}
+.seg.sm button{padding:3px 10px;font-size:12px;border-radius:7px}
+.cal{margin:0 -4px}
+.cwk,.cgrid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px}
+.cwk span{text-align:center;font-size:11px;font-weight:600;color:var(--muted);padding:2px 0 4px}
+.cwk .sun,.cday.sun .dn{color:var(--out)} .cwk .sat,.cday.sat .dn{color:var(--in)}
+.cday{min-height:58px;border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:3px 3px 4px;display:flex;flex-direction:column;align-items:stretch;gap:1px;text-align:right;overflow:hidden;min-width:0}
+.cday.blank{border:0;background:transparent}
+.cday .dn{font-size:12px;font-weight:700;text-align:left;color:var(--ink)}
+.cday .ci,.cday .co{font-size:10.5px;font-weight:600;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:clip;letter-spacing:-.02em}
+.cday .ci{color:var(--in)} .cday .co{color:var(--out)}
+.cday.today{border-color:var(--accent);border-width:2px}
+.cday.sel{background:var(--accent-soft);border-color:var(--accent)}
+.cday:hover{border-color:var(--accent)}
+.caldetail{margin-top:14px}
+@media (min-width:640px){.cday{min-height:72px;padding:5px 6px}.cday .ci,.cday .co{font-size:12px}}
+
 /* 고정 지출 */
 .reccard{border-color:var(--accent);background:linear-gradient(var(--accent-soft),var(--surface) 70px)}
 .recrows{display:flex;flex-direction:column;gap:8px}
@@ -389,6 +407,7 @@ const S={
 };
 const ui=ls.get(K.ui,{});
 if(ui.view==='year')S.view='year';
+S.listMode=ui.listMode==='cal'?'cal':'list';S.calDay='';
 let cfg=ls.get(K.cfg,null);
 let outbox=ls.get(K.out,[]);
 
@@ -754,22 +773,62 @@ function renderList(y,m){
   if(tab==='all'||tab==='sale')for(const [d] of S.visits)if(d.startsWith(k)&&!byDay[d])byDay[d]=[];
   const days=Object.keys(byDay).sort().reverse();
   const tabs=[['all','전체'],['sale','매출'],['out','지출'],['etc','기타·저축']];
-  let h=`<section class="card"><h2>내역<span class="tabs">${tabs.map(([v,l])=>`<button type="button" data-tab="${v}" aria-pressed="${tab===v}">${l}</button>`).join('')}</span></h2>`;
+  const modes=`<span class="seg sm" role="group" aria-label="보기 방식"><button type="button" data-lmode="list" aria-pressed="${S.listMode!=='cal'}">목록</button><button type="button" data-lmode="cal" aria-pressed="${S.listMode==='cal'}">달력</button></span>`;
+  if(S.listMode==='cal')return calHTML(y,m);
+  let h=`<section class="card"><h2>내역${modes}<span class="tabs">${tabs.map(([v,l])=>`<button type="button" data-tab="${v}" aria-pressed="${tab===v}">${l}</button>`).join('')}</span></h2>`;
   if(!days.length){
     h+=`<div class="empty"><strong>${m}월 기록이 아직 없어요</strong>아래 <b>매출 입력</b>으로 하루 매출과 방문자를 한 번에 적고,<br><b>지출·기타</b>로 고정비·소모품·개인지출·모으기를 적어요.</div></section>`;
     return h;
   }
-  h+=days.map(d=>{
-    const items=byDay[d].slice().sort((a,b)=>(isSale(b)-isSale(a))||((a.ts||0)-(b.ts||0)));
-    const dt=new Date(d+'T00:00:00');
-    const vis=S.visits.get(d)||0;
-    const sale=items.filter(isSale).reduce((a,e)=>a+e.amt,0);
-    const right=[vis?`<span class="vis">방문 ${vis}명</span>`:'',sale?`매출 ${won(sale)}`:''].filter(Boolean).join(' · ');
-    const head=`<span>${dt.getMonth()+1}월 ${dt.getDate()}일 (${WD[dt.getDay()]})</span><span class="num">${right}</span>`;
-    return `<div class="day">${vis||sale?`<button type="button" class="dayhead" data-sales="${d}">${head}</button>`:`<div class="dayhead">${head}</div>`}`+
-      items.map(e=>rowHTML(e)).join('')+'</div>';
-  }).join('');
+  h+=days.map(d=>dayHTML(d,byDay[d])).join('');
   return h+'</section>';
+}
+function dayHTML(d,list){
+  const items=list.slice().sort((a,b)=>(isSale(b)-isSale(a))||((a.ts||0)-(b.ts||0)));
+  const dt=new Date(d+'T00:00:00');
+  const vis=S.visits.get(d)||0;
+  const sale=items.filter(isSale).reduce((a,e)=>a+e.amt,0);
+  const right=[vis?`<span class="vis">방문 ${vis}명</span>`:'',sale?`매출 ${won(sale)}`:''].filter(Boolean).join(' · ');
+  const head=`<span>${dt.getMonth()+1}월 ${dt.getDate()}일 (${WD[dt.getDay()]})</span><span class="num">${right}</span>`;
+  return `<div class="day">${vis||sale?`<button type="button" class="dayhead" data-sales="${d}">${head}</button>`:`<div class="dayhead">${head}</div>`}`+
+    items.map(e=>rowHTML(e)).join('')+'</div>';
+}
+
+/* ───────── 달력 보기: 날마다 수입·지출만 간단히 ───────── */
+const short=n=>{const a=Math.abs(n);if(a>=1e4){const v=a/1e4;return (v>=10?Math.round(v):Math.round(v*10)/10).toLocaleString('ko-KR')+'만'}return a>=1e3?Math.round(a/1e3)+'천':a.toLocaleString('ko-KR')};
+function daySums(d,arr){
+  let inc=0,out=0;
+  for(const e of arr){
+    if(e.d!==d)continue;
+    if(e.t==='in'&&e.cat!==FUND_CAT)inc+=e.amt;
+    else if(e.t==='out'&&e.cat===REFUND_CAT)inc-=e.amt;
+    else if(e.t==='out'&&e.cat!==SETUP_CAT)out+=e.amt;
+  }
+  return {inc,out};
+}
+function calHTML(y,m){
+  const k=ymOf(y,m),arr=S.byMonth.get(k)||[];
+  const first=new Date(y,m-1,1).getDay(),last=new Date(y,m,0).getDate();
+  const today=todayStr();
+  if(!S.calDay||!S.calDay.startsWith(k))S.calDay=today.startsWith(k)?today:'';
+  let cells='';
+  for(let i=0;i<first;i++)cells+='<span class="cday blank"></span>';
+  let tin=0,tout=0;
+  for(let d=1;d<=last;d++){
+    const ds=`${k}-${pad(d)}`,dow=(first+d-1)%7,{inc,out}=daySums(ds,arr);tin+=inc;tout+=out;
+    cells+=`<button type="button" class="cday${dow===0?' sun':dow===6?' sat':''}${ds===today?' today':''}${ds===S.calDay?' sel':''}" data-cday="${ds}" aria-label="${m}월 ${d}일 수입 ${won(inc)}원 지출 ${won(out)}원">
+      <span class="dn">${d}</span>${inc?`<span class="ci">+${short(inc)}</span>`:''}${out?`<span class="co">−${short(out)}</span>`:''}</button>`;
+  }
+  const modes=`<span class="seg sm" role="group" aria-label="보기 방식"><button type="button" data-lmode="list" aria-pressed="false">목록</button><button type="button" data-lmode="cal" aria-pressed="true">달력</button></span>`;
+  let detail='';
+  if(S.calDay){
+    const list=arr.filter(e=>e.d===S.calDay);
+    detail=list.length||S.visits.get(S.calDay)?dayHTML(S.calDay,list)
+      :`<div class="empty" style="padding:16px 8px"><strong>${Number(S.calDay.slice(8))}일 기록이 없어요</strong>아래 버튼으로 이 날짜에 바로 적을 수 있어요.</div>`;
+  }else detail='<p class="note" style="text-align:center">날짜를 누르면 그날 내역이 여기에 나와요.</p>';
+  return `<section class="card"><h2>내역${modes}<span class="num" style="font-weight:600"><span class="c-in">수입 ${won(tin)}</span> · <span class="c-out">지출 ${won(tout)}</span></span></h2>
+    <div class="cal num"><div class="cwk">${WD.map((w,i)=>`<span class="${i===0?'sun':i===6?'sat':''}">${w}</span>`).join('')}</div><div class="cgrid">${cells}</div></div>
+    <div class="caldetail">${detail}</div></section>`;
 }
 function rowHTML(e){
   if(isSale(e)){
@@ -947,6 +1006,7 @@ function startLive(){
 let M=null;
 const newLine=pay=>({key:uid(),id:null,pay:pay||'카드',cat:'',amt:0,vatOn:true,memo:'',orig:null});
 function defaultDate(){
+  if(S.view==='month'&&S.listMode==='cal'&&S.calDay&&S.calDay.startsWith(ymOf(S.y,S.m)))return S.calDay;
   if(S.view==='month'&&!(S.y===T0.getFullYear()&&S.m===T0.getMonth()+1))return ymOf(S.y,S.m)+'-01';
   return todayStr();
 }
@@ -1284,8 +1344,8 @@ document.addEventListener('click',ev=>{
   if(b.id==='goSetup'){S.mode='setup';render();return}
   if(b.id==='demo'){startDemo();return}
   if(b.id==='copyCode'){if(codeText)copy(codeText,'코드를 복사했어요. Apps Script 편집기에 붙여넣으세요.');return}
-  if(b.id==='v-month'){S.view='month';ls.set(K.ui,{view:'month'});return render()}
-  if(b.id==='v-year'){S.view='year';ls.set(K.ui,{view:'year'});return render()}
+  if(b.id==='v-month'){S.view='month';ls.set(K.ui,Object.assign(ls.get(K.ui,{}),{view:'month'}));return render()}
+  if(b.id==='v-year'){S.view='year';ls.set(K.ui,Object.assign(ls.get(K.ui,{}),{view:'year'}));return render()}
   if(b.id==='prev'||b.id==='next'){const d=b.id==='prev'?-1:1;if(S.view==='year')S.y+=d;else{S.m+=d;if(S.m<1){S.m=12;S.y--}if(S.m>12){S.m=1;S.y++}}return render()}
   if(b.id==='openHist')return openHist(S.y-1);
   if(b.id==='openFull')return openFull();
@@ -1293,9 +1353,11 @@ document.addEventListener('click',ev=>{
   if(b.id==='recAdd')return addRecEntries(ymOf(S.y,S.m));
   if(b.id==='recManage')return openRecs();
   if(b.dataset.tab){S.listTab=b.dataset.tab;return render()}
+  if(b.dataset.lmode){S.listMode=b.dataset.lmode;ls.set(K.ui,Object.assign(ls.get(K.ui,{}),{listMode:S.listMode}));return render()}
+  if(b.dataset.cday){S.calDay=b.dataset.cday;render();const dt=document.querySelector('.caldetail');if(dt&&dt.getBoundingClientRect().top>innerHeight-160)dt.scrollIntoView({behavior:'smooth',block:'start'});return}
   if(b.dataset.sales)return openSales(b.dataset.sales);
   if(b.dataset.edit){const e=S.entries.get(b.dataset.edit);if(e)openEntry(e);return}
-  if(b.dataset.month){S.m=+b.dataset.month;S.view='month';ls.set(K.ui,{view:'month'});window.scrollTo({top:0});return render()}
+  if(b.dataset.month){S.m=+b.dataset.month;S.view='month';ls.set(K.ui,Object.assign(ls.get(K.ui,{}),{view:'month'}));window.scrollTo({top:0});return render()}
 });
 function saveHistQuiet(){const ops=[];M.rows.forEach((r,i)=>{if(r.inc!==r.o.inc||r.vis!==r.o.vis)ops.push({op:'hist',y:M.y,m:i+1,inc:r.inc,vis:r.vis})});if(ops.length)commit(ops)}
 

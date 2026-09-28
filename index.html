@@ -263,7 +263,9 @@ button.dayhead:hover{color:var(--ink)}
 .cwk .sun,.cday.sun .dn{color:var(--out)} .cwk .sat,.cday.sat .dn{color:var(--in)}
 .cday{min-height:58px;border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:3px 3px 4px;display:flex;flex-direction:column;align-items:stretch;gap:1px;text-align:right;overflow:hidden;min-width:0}
 .cday.blank{border:0;background:transparent}
+.cday .dh{display:flex;justify-content:space-between;align-items:baseline;gap:2px}
 .cday .dn{font-size:12px;font-weight:700;text-align:left;color:var(--ink)}
+.cday .cv{font-size:10px;font-weight:700;color:var(--accent);white-space:nowrap}
 .cday .ci,.cday .co{font-size:10.5px;font-weight:600;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:clip;letter-spacing:-.02em}
 .cday .ci{color:var(--in)} .cday .co{color:var(--out)}
 .cday.today{border-color:var(--accent);border-width:2px}
@@ -813,11 +815,11 @@ function calHTML(y,m){
   if(!S.calDay||!S.calDay.startsWith(k))S.calDay=today.startsWith(k)?today:'';
   let cells='';
   for(let i=0;i<first;i++)cells+='<span class="cday blank"></span>';
-  let tin=0,tout=0;
+  let tin=0,tout=0,tvis=0;
   for(let d=1;d<=last;d++){
-    const ds=`${k}-${pad(d)}`,dow=(first+d-1)%7,{inc,out}=daySums(ds,arr);tin+=inc;tout+=out;
-    cells+=`<button type="button" class="cday${dow===0?' sun':dow===6?' sat':''}${ds===today?' today':''}${ds===S.calDay?' sel':''}" data-cday="${ds}" aria-label="${m}월 ${d}일 수입 ${won(inc)}원 지출 ${won(out)}원">
-      <span class="dn">${d}</span>${inc?`<span class="ci">+${short(inc)}</span>`:''}${out?`<span class="co">−${short(out)}</span>`:''}</button>`;
+    const ds=`${k}-${pad(d)}`,dow=(first+d-1)%7,{inc,out}=daySums(ds,arr),vis=S.visits.get(ds)||0;tin+=inc;tout+=out;tvis+=vis;
+    cells+=`<button type="button" class="cday${dow===0?' sun':dow===6?' sat':''}${ds===today?' today':''}${ds===S.calDay?' sel':''}" data-cday="${ds}" aria-label="${m}월 ${d}일${vis?` 방문 ${vis}명`:''} 수입 ${won(inc)}원 지출 ${won(out)}원">
+      <span class="dh"><span class="dn">${d}</span>${vis?`<span class="cv">${vis}명</span>`:''}</span>${inc?`<span class="ci">+${short(inc)}</span>`:''}${out?`<span class="co">−${short(out)}</span>`:''}</button>`;
   }
   const modes=`<span class="seg sm" role="group" aria-label="보기 방식"><button type="button" data-lmode="list" aria-pressed="false">목록</button><button type="button" data-lmode="cal" aria-pressed="true">달력</button></span>`;
   let detail='';
@@ -826,7 +828,7 @@ function calHTML(y,m){
     detail=list.length||S.visits.get(S.calDay)?dayHTML(S.calDay,list)
       :`<div class="empty" style="padding:16px 8px"><strong>${Number(S.calDay.slice(8))}일 기록이 없어요</strong>아래 버튼으로 이 날짜에 바로 적을 수 있어요.</div>`;
   }else detail='<p class="note" style="text-align:center">날짜를 누르면 그날 내역이 여기에 나와요.</p>';
-  return `<section class="card"><h2>내역${modes}<span class="num" style="font-weight:600"><span class="c-in">수입 ${won(tin)}</span> · <span class="c-out">지출 ${won(tout)}</span></span></h2>
+  return `<section class="card"><h2>내역${modes}<span class="num" style="font-weight:600"><span class="c-in">수입 ${won(tin)}</span> · <span class="c-out">지출 ${won(tout)}</span>${tvis?` · <span style="color:var(--accent)">방문 ${tvis}명</span>`:''}</span></h2>
     <div class="cal num"><div class="cwk">${WD.map((w,i)=>`<span class="${i===0?'sun':i===6?'sat':''}">${w}</span>`).join('')}</div><div class="cgrid">${cells}</div></div>
     <div class="caldetail">${detail}</div></section>`;
 }

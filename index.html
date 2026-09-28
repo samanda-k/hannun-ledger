@@ -254,6 +254,15 @@ button.dayhead:hover{color:var(--ink)}
 .tot b{font-size:19px}
 .tot small{font-size:12px;color:var(--muted)}
 
+/* 분류 모아보기 */
+button.bar{width:100%;border:0;background:transparent;padding:5px 6px;margin:0;border-radius:8px;text-align:left;font:inherit;color:inherit;box-sizing:border-box;cursor:pointer}
+button.bar:hover{background:var(--surface2)}
+button.bar.on{background:var(--accent-soft);outline:1.5px solid var(--accent)}
+.catchip{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;color:var(--ink)}
+.catchip b{color:var(--accent)}
+.catchip button{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:3px 10px;font-size:12px;font-weight:600;color:var(--muted)}
+#listCard{scroll-margin-top:12px}
+
 /* 달력 */
 .seg.sm{padding:2px;border-radius:9px;margin-left:8px;vertical-align:middle}
 .seg.sm button{padding:3px 10px;font-size:12px;border-radius:7px}
@@ -372,7 +381,7 @@ const PAYS=['카드','계좌','현금'];
 const BIZ_OUT=['고정비','소모품','사업자','창업·이전','매출 환불'];
 const SETUP_CAT='창업·이전',FUND_CAT='대출·자금',REFUND_CAT='매출 환불';   // 둘 다 월 급여·남는 돈 계산에서 빠져요
 const PERSONAL_OUT=['식비','카페·간식','장보기','교통','주거·관리비','통신','쇼핑','미용','의료','문화·여가','경조사','교육','보험','기타'];
-const ETC_IN=['기타 수입','이자','환급','용돈','중고판매','대출·자금'];
+const ETC_IN=['기타 수입','부업','이자','환급','용돈','중고판매','대출·자금'];
 const MOVES=['모으기','노란우산공제','새출발기금','빌린 돈 갚기'];
 const WD=['일','월','화','수','목','금','토'];
 const K={cfg:'hn-cfg',cache:'hn-cache',out:'hn-outbox',ui:'hn-ui'};
@@ -405,7 +414,7 @@ const S={
   mode:'setup',view:'month',y:T0.getFullYear(),m:T0.getMonth()+1,listTab:'all',
   entries:new Map(),visits:new Map(),hist:new Map(),
   byMonth:new Map(),visByMonth:new Map(),stats:new Map(),
-  sync:'idle',lastSync:0,sheetUrl:'',setupMsg:'',bal:new Map(),oldServer:false,rec:new Map(),recDraft:{},recServer:true
+  sync:'idle',lastSync:0,sheetUrl:'',setupMsg:'',catFilter:'',bal:new Map(),oldServer:false,rec:new Map(),recDraft:{},recServer:true
 };
 const ui=ls.get(K.ui,{});
 if(ui.view==='year')S.view='year';
@@ -611,14 +620,14 @@ function renderMonth(){
       const top=items[0][1].amt,tot=s.sales||1;
       const pays=PAYS.map((p,i)=>({p,v:s.pays[p]||0,i})).filter(x=>x.v);
       h+=`<section class="card"><h2>매출 구성<span class="num">${s.salesN}건</span></h2><div class="bars num">${items.map(([c,v])=>
-        `<div class="bar"><span class="name">${esc(c)}<small>${v.n}건</small></span><span class="track"><span class="fill" style="width:${Math.max(2,v.amt/top*100)}%"></span></span><span class="amt">${won(v.amt)}<span class="pct">${Math.round(v.amt/tot*100)}%</span></span></div>`).join('')}</div>
+        `<button type="button" class="bar${S.catFilter==='S|'+c?' on':''}" data-catf="${esc('S|'+c)}"><span class="name">${esc(c)}<small>${v.n}건</small></span><span class="track"><span class="fill" style="width:${Math.max(2,v.amt/top*100)}%"></span></span><span class="amt">${won(v.amt)}<span class="pct">${Math.round(v.amt/tot*100)}%</span></span></button>`).join('')}</div>
         ${pays.length?`<div class="subh">결제 수단</div><div class="split">${pays.map(x=>`<span class="pay${x.i}" style="width:${x.v/tot*100}%"></span>`).join('')}</div><div class="splitlg num">${pays.map(x=>`<span><i class="pay${x.i}"></i>${x.p} ${won(x.v)} (${Math.round(x.v/tot*100)}%)</span>`).join('')}</div>`:''}
       </section>`;
     }
     if(outs.length){
       const top=Math.max(...outs.map(o=>o[1])),tot=s.bizOut+s.personal||1;
       h+=`<section class="card"><h2>지출 분류<span class="num">${won(s.bizOut+s.personal)}원</span></h2><div class="bars num">${outs.map(([k,v])=>{const b=k[0]==='B';
-        return `<div class="bar"><span class="name">${b?'<span class="tag biz">사업</span> ':''}${esc(k.slice(2))}</span><span class="track"><span class="fill ${b?'biz':'out'}" style="width:${Math.max(2,v/top*100)}%"></span></span><span class="amt">${won(v)}<span class="pct">${Math.round(v/tot*100)}%</span></span></div>`}).join('')}</div></section>`;
+        return `<button type="button" class="bar${S.catFilter===k?' on':''}" data-catf="${esc(k)}"><span class="name">${b?'<span class="tag biz">사업</span> ':''}${esc(k.slice(2))}</span><span class="track"><span class="fill ${b?'biz':'out'}" style="width:${Math.max(2,v/top*100)}%"></span></span><span class="amt">${won(v)}<span class="pct">${Math.round(v/tot*100)}%</span></span></button>`}).join('')}</div><p class="note">분류를 누르면 아래 내역에 그 분류만 모아서 보여줘요.</p></section>`;
     }
     h+='</div>';
   }
@@ -768,7 +777,28 @@ function saveRec(){
   commit([{op:'rec',rec:Object.assign({},r)}]);openRecs();toast('저장했어요');
 }
 
+// 분류 필터: 'B|고정비'(사업 지출) · 'P|식비'(개인지출) · 'S|시술'(매출 항목)
+function catPass(key,e){
+  const kind=key[0],c=key.slice(2);
+  if(kind==='S')return isSale(e)&&e.cat===c;
+  return e.t==='out'&&e.cat===c&&(kind==='B')===!!e.biz;
+}
+function catLabel(key){return (key[0]==='S'?'매출 ':key[0]==='B'?'사업 ':'개인 ')+key.slice(2)}
+function renderCatList(y,m){
+  const k=ymOf(y,m),key=S.catFilter;
+  const list=(S.byMonth.get(k)||[]).filter(e=>catPass(key,e)).sort((a,b)=>a.d<b.d?1:a.d>b.d?-1:(b.ts||0)-(a.ts||0));
+  const sum=list.reduce((a,e)=>a+e.amt,0);
+  const byDay={};list.forEach(e=>{(byDay[e.d]=byDay[e.d]||[]).push(e)});
+  let h=`<section class="card" id="listCard"><h2>내역<span class="catchip"><b>${esc(catLabel(key))}</b> ${list.length}건 · ${won(sum)}원<button type="button" id="catClear" aria-label="분류 모아보기 끄기">✕ 전체 보기</button></span></h2>`;
+  if(!list.length)return h+`<div class="empty"><strong>${m}월에는 ${esc(catLabel(key))} 기록이 없어요</strong>다른 달로 넘겨 보거나 ✕를 눌러 전체 내역으로 돌아가요.</div></section>`;
+  h+=Object.keys(byDay).sort().reverse().map(d=>{
+    const dt=new Date(d+'T00:00:00');const t=byDay[d].reduce((a,e)=>a+e.amt,0);
+    return `<div class="day"><div class="dayhead"><span>${dt.getMonth()+1}월 ${dt.getDate()}일 (${WD[dt.getDay()]})</span><span class="num">${won(t)}</span></div>${byDay[d].map(e=>rowHTML(e)).join('')}</div>`;
+  }).join('');
+  return h+'<p class="note">항목을 누르면 바로 고칠 수 있어요. 달을 넘겨도 같은 분류로 계속 보여요.</p></section>';
+}
 function renderList(y,m){
+  if(S.catFilter)return renderCatList(y,m);
   const k=ymOf(y,m);const tab=S.listTab;
   const all=(S.byMonth.get(k)||[]).filter(e=>tab==='all'||(tab==='sale'?isSale(e):tab==='out'?e.t==='out':tab==='etc'?(e.t==='move'||(e.t==='in'&&!e.biz)):true));
   const byDay={};all.forEach(e=>{(byDay[e.d]=byDay[e.d]||[]).push(e)});
@@ -1355,6 +1385,8 @@ document.addEventListener('click',ev=>{
   if(b.id==='recAdd')return addRecEntries(ymOf(S.y,S.m));
   if(b.id==='recManage')return openRecs();
   if(b.dataset.tab){S.listTab=b.dataset.tab;return render()}
+  if(b.dataset.catf){S.catFilter=S.catFilter===b.dataset.catf?'':b.dataset.catf;render();const c=$('listCard');if(S.catFilter&&c)c.scrollIntoView({behavior:'smooth',block:'start'});return}
+  if(b.id==='catClear'){S.catFilter='';return render()}
   if(b.dataset.lmode){S.listMode=b.dataset.lmode;ls.set(K.ui,Object.assign(ls.get(K.ui,{}),{listMode:S.listMode}));return render()}
   if(b.dataset.cday){S.calDay=b.dataset.cday;render();const dt=document.querySelector('.caldetail');if(dt&&dt.getBoundingClientRect().top>innerHeight-160)dt.scrollIntoView({behavior:'smooth',block:'start'});return}
   if(b.dataset.sales)return openSales(b.dataset.sales);
